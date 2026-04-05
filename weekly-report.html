@@ -53,19 +53,62 @@
 <script type="text/babel">
   const { useState, useEffect } = React;
 
-  /* ─── encode / decode report in URL query param ─── */
+  /* ─── encode / decode report in URL ─── */
   function encodeReport(data) {
-    try { return btoa(unescape(encodeURIComponent(JSON.stringify(data)))); }
-    catch { return null; }
+    try {
+      // compact keys to shorten URL significantly
+      const c = {
+        ws: data.weekStart,
+        we: data.weekEnd,
+        s:  data.status,
+        sw: data.statusWhy  || undefined,
+        a:  data.areas,
+        t:  [data.task1, data.task2, data.task3].filter(Boolean),
+        tr: data.trello     || undefined,
+        b:  data.blocked === 'yes' ? 1 : 0,
+        bw: data.blockedWhy || undefined,
+        f:  data.focus,
+        fm: data.focusMain  || undefined,
+        n:  data.needAviya === 'yes' ? 1 : 0,
+        av: data.aviyaText  || undefined,
+        pn: data.partnerName,
+      };
+      Object.keys(c).forEach(k => c[k] === undefined && delete c[k]);
+      return btoa(unescape(encodeURIComponent(JSON.stringify(c))));
+    } catch { return null; }
   }
   function decodeReport(str) {
-    try { return JSON.parse(decodeURIComponent(escape(atob(str)))); }
-    catch { return null; }
+    try {
+      const d = JSON.parse(decodeURIComponent(escape(atob(str))));
+      // expand compact format
+      if ('ws' in d) {
+        return {
+          weekStart:   d.ws,
+          weekEnd:     d.we,
+          status:      d.s,
+          statusWhy:   d.sw || '',
+          areas:       d.a  || [],
+          tasks:       d.t  || [],
+          trello:      d.tr || '',
+          blocked:     d.b  ? 'yes' : 'no',
+          blockedWhy:  d.bw || '',
+          focus:       d.f  || [],
+          focusMain:   d.fm || '',
+          needAviya:   d.n  ? 'yes' : 'no',
+          aviyaText:   d.av || '',
+          partnerName: d.pn || '',
+        };
+      }
+      // legacy format (old URLs still work)
+      return d;
+    } catch { return null; }
   }
   function getHashReport() {
-    const params = new URLSearchParams(window.location.search);
-    const r = params.get('r');
-    return r ? decodeReport(r) : null;
+    // support both ?r= (new) and #r= (old/WhatsApp fallback)
+    const qp = new URLSearchParams(window.location.search).get('r');
+    if (qp) return decodeReport(qp);
+    const hm = window.location.hash.match(/[#&]r=([^&]+)/);
+    return hm ? decodeReport(hm[1]) : null;
   }
 
   /* ─── storage ─── */
