@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>דיווח שבועי</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface-container-low": "#f3f4f5",
+            "surface-container-highest": "#e1e3e4",
+            "surface-container-lowest": "#ffffff",
+            "on-surface-variant": "#434654",
+            "on-surface": "#191c1d",
+            "primary": "#003d9b",
+            "primary-container": "#0052cc",
+            "primary-fixed": "#dae2ff",
+            "surface-tint": "#0c56d0",
+            "error": "#ba1a1a",
+            "surface": "#f8f9fa",
+            "background": "#f8f9fa",
+          },
+          fontFamily: { headline: ["Manrope"], body: ["Inter"] }
+        }
+      }
+    }
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { font-family: 'Inter', sans-serif; }
+    h1, h2, h3, .font-headline { font-family: 'Manrope', sans-serif; }
+    .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; user-select: none; }
+    .ambient-shadow { box-shadow: 0 4px 32px 0 rgba(25,28,29,0.07); }
+    .dark .ambient-shadow { box-shadow: 0 4px 32px 0 rgba(0,0,0,0.3); }
+    .glass-panel { backdrop-filter: blur(20px); }
+    input:focus, textarea:focus { outline: none; }
+    input[type="date"] { color-scheme: light; }
+    .dark input[type="date"] { color-scheme: dark; }
+    .fade-in { animation: fi 0.18s ease; }
+    @keyframes fi { from { opacity:0; transform:translateY(-5px); } to { opacity:1; transform:translateY(0); } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { useState, useEffect } = React;
+
+  /* ─── encode / decode report in URL hash ─── */
+  function encodeReport(data) {
+    try { return btoa(unescape(encodeURIComponent(JSON.stringify(data)))); }
+    catch { return null; }
+  }
+  function decodeReport(str) {
+    try { return JSON.parse(decodeURIComponent(escape(atob(str)))); }
+    catch { return null; }
+  }
+  function getHashReport() {
+    const h = window.location.hash;
+    const m = h.match(/[#&]r=([^&]+)/);
+    return m ? decodeReport(m[1]) : null;
+  }
+
+  /* ─── storage ─── */
+  const LS = {
+    getDark:      () => localStorage.getItem('wr-dark') === '1',
+    setDark:      v  => localStorage.setItem('wr-dark', v ? '1' : '0'),
+    getPartner:   () => localStorage.getItem('wr-partner') || 'אביה',
+    setPartner:   v  => localStorage.setItem('wr-partner', v),
+    getBaseUrl:   () => localStorage.getItem('wr-baseurl') || '',
+    setBaseUrl:   v  => localStorage.setItem('wr-baseurl', v),
+    getReports:   () => JSON.parse(localStorage.getItem('wr-reports') || '[]'),
+    addReport:    r  => { const a = LS.getReports(); a.unshift(r); localStorage.setItem('wr-reports', JSON.stringify(a.slice(0,100))); },
+    deleteReport: id => { const a = LS.getReports().filter(r=>r.id!==id); localStorage.setItem('wr-reports', JSON.stringify(a)); },
+    getProjects:  () => JSON.parse(localStorage.getItem('wr-projects') || '[]'),
+    saveProjects: v  => localStorage.setItem('wr-projects', JSON.stringify(v)),
+    clearAll:     () => { localStorage.removeItem('wr-reports'); localStorage.removeItem('wr-projects'); },
+  };
+
+  /* ─── utils ─── */
+  function getWeekRange() {
+    const t = new Date(), d = t.getDay();
+    const sun = new Date(t); sun.setDate(t.getDate() - d);
+    const sat = new Date(sun); sat.setDate(sun.getDate() + 6);
+    const fmt = x => x.toISOString().split('T')[0];
+    return { start: fmt(sun), end: fmt(sat) };
+  }
+
+  /* ─── data ─── */
+  const STATUS_OPTS = [
+    { v:'excellent', emoji:'🤩', label:'מעולה',  sub:'התקדמות חזקה'  },
+    { v:'good',      emoji:'🙂', label:'טוב',    sub:'התקדמות רגילה' },
+    { v:'medium',    emoji:'😐', label:'בינוני', sub:'יש עיכובים'    },
+    { v:'weak',      emoji:'🙁', label:'חלש',    sub:'מעט התקדמות'  },
+  ];
+  const AREA_OPTS = [
+    { v:'product',   label:'מוצר'    },
+    { v:'ops',       label:'תפעול'   },
+    { v:'community', label:'קהילה'   },
+    { v:'other',     label:'אחר'     },
+  ];
+  const FOCUS_OPTS = [
+    { v:'continue',    label:'המשך פיתוח'  },
+    { v:'improve',     label:'שיפור מערכת' },
+    { v:'bugs',        label:'סגירת באגים' },
+    { v:'new_feature', label:"בניית פיצ'ר" },
+    { v:'other',       label:'אחר'          },
+  ];
+  const PROJECT_STATUSES = [
+    { v:'active', label:'פעיל',  color:'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400' },
+    { v:'paused', label:'מושהה', color:'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'         },
+    { v:'done',   label:'הושלם', color:'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'            },
+  ];
+
+  /* ─── shared components ─── */
+  function SectionCard({ n, title, children }) {
+    return (
+      <section className="bg-surface-container-low dark:bg-slate-800 p-8 rounded-xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-full h-1 bg-surface-tint"/>
+        <p className="text-xs font-bold text-on-surface-variant dark:text-slate-400 uppercase tracking-widest mb-6">{n}. {title}</p>
+        {children}
+      </section>
+    );
+  }
+
+  function UInput({ placeholder, value, onChange, maxLength, type='text' }) {
+    return (
+      <input type={type} value={value} onChange={e=>onChange(e.target.value)}
+        placeholder={placeholder} maxLength={maxLength}
+        className="w-full bg-transparent border-0 border-b-2 border-slate-200 dark:border-slate-600 focus:border-primary dark:focus:border-blue-400 py-2 text-on-surface dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 text-sm transition-colors"/>
+    );
+  }
+
+  function StatusRadio({ value, onChange }) {
+    return (
+      <div className="flex flex-wrap gap-4">
+        {STATUS_OPTS.map(o => (
+          <div key={o.v} onClick={()=>onChange(o.v)}
+            className={`flex-1 min-w-[110px] p-4 text-center rounded-xl border-2 cursor-pointer transition-all select-none
+              ${value===o.v ? 'border-primary bg-primary-fixed dark:bg-blue-900/40 dark:border-blue-400' : 'border-transparent bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600'}`}>
+            <span className="block text-2xl mb-1">{o.emoji}</span>
+            <span className="font-bold text-sm block text-on-surface dark:text-slate-100">{o.label}</span>
+            <span className="text-xs text-slate-400 block mt-0.5">{o.sub}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function AreaCheckboxes({ values, onChange }) {
+    const toggle = v => onChange(values.includes(v) ? values.filter(x=>x!==v) : [...values,v]);
+    return (
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {AREA_OPTS.map(o => (
+          <div key={o.v} onClick={()=>toggle(o.v)}
+            className={`flex items-center gap-3 p-4 rounded-xl cursor-pointer transition-colors select-none
+              ${values.includes(o.v) ? 'bg-primary-fixed dark:bg-blue-900/40' : 'bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600'}`}>
+            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors
+              ${values.includes(o.v) ? 'border-primary bg-primary dark:border-blue-400 dark:bg-blue-600' : 'border-slate-300 dark:border-slate-500'}`}>
+              {values.includes(o.v) && <span className="text-white text-xs leading-none font-bold">✓</span>}
+            </div>
+            <span className="font-medium text-slate-700 dark:text-slate-200 text-sm">{o.label}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function FocusChips({ values, onChange }) {
+    const toggle = v => onChange(values.includes(v) ? values.filter(x=>x!==v) : [...values,v]);
+    return (
+      <div className="flex flex-wrap gap-3">
+        {FOCUS_OPTS.map(o => (
+          <div key={o.v} onClick={()=>toggle(o.v)}
+            className={`px-4 py-2 rounded-lg border-2 cursor-pointer transition-all select-none
+              ${values.includes(o.v) ? 'border-primary bg-primary-fixed dark:bg-blue-900/40 dark:border-blue-400' : 'bg-white dark:bg-slate-700 border-transparent hover:bg-slate-50 dark:hover:bg-slate-600'}`}>
+            <span className="text-sm font-semibold text-on-surface dark:text-slate-100">{o.label}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function YesNo({ value, onChange, warningOnYes=false }) {
+    const opts = [
+      { v:'no',  label:'לא', chk:'border-primary dark:border-blue-400' },
+      { v:'yes', label:'כן', chk: warningOnYes ? 'border-error dark:border-red-400' : 'border-primary dark:border-blue-400' },
+    ];
+    return (
+      <div className="flex gap-4">
+        {opts.map(o=>(
+          <div key={o.v} onClick={()=>onChange(o.v)}
+            className={`flex items-center gap-3 px-6 py-3 bg-white dark:bg-slate-700 rounded-full border cursor-pointer transition-all select-none ${value===o.v ? o.chk : 'border-transparent'}`}>
+            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-colors
+              ${value===o.v ? (warningOnYes&&o.v==='yes'?'border-error dark:border-red-400':'border-primary dark:border-blue-400') : 'border-slate-300 dark:border-slate-500'}`}>
+              {value===o.v && <div className={`w-2 h-2 rounded-full ${warningOnYes&&o.v==='yes'?'bg-error':'bg-primary dark:bg-blue-400'}`}/>}
+            </div>
+            <span className="font-bold text-slate-700 dark:text-slate-200">{o.label}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function Toggle({ value, onChange }) {
+    return (
+      <div onClick={()=>onChange(!value)} className="cursor-pointer select-none">
+        <div className={`w-12 h-6 rounded-full relative transition-colors ${value?'bg-primary dark:bg-blue-500':'bg-slate-300 dark:bg-slate-600'}`}>
+          <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all ${value?'right-1':'right-7'}`}/>
+        </div>
+      </div>
+    );
+  }
+
+  function EmptyState({ icon, title, sub }) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <span className="material-symbols-outlined text-5xl text-slate-300 dark:text-slate-600 mb-4">{icon}</span>
+        <h3 className="font-bold text-slate-500 dark:text-slate-400 mb-1">{title}</h3>
+        <p className="text-sm text-slate-400 dark:text-slate-500 max-w-xs">{sub}</p>
+      </div>
+    );
+  }
+
+  /* ─── Report View (read-only, shown to recipient) ─── */
+  function ReportView({ report }) {
+    const statusObj = STATUS_OPTS.find(o=>o.v===report.status);
+    const areas     = AREA_OPTS.filter(o=>report.areas?.includes(o.v));
+    const focusList = FOCUS_OPTS.filter(o=>report.focus?.includes(o.v));
+    const tasks     = report.tasks || [report.task1,report.task2,report.task3].filter(Boolean);
+    const [copied, setCopied] = useState(false);
+
+    function Row({ icon, label, children }) {
+      return (
+        <div className="flex gap-4 py-4 border-b border-slate-100 dark:border-slate-700 last:border-0">
+          <span className="material-symbols-outlined text-primary dark:text-blue-400 text-xl mt-0.5 shrink-0">{icon}</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-bold text-on-surface-variant dark:text-slate-400 uppercase tracking-widest mb-1">{label}</p>
+            <div>{children}</div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="max-w-xl mx-auto">
+        {/* header card */}
+        <div className="bg-gradient-to-br from-primary to-primary-container rounded-2xl p-8 mb-6 text-white text-right relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-40 h-40 rounded-full bg-white/5 -translate-x-16 -translate-y-16"/>
+          <div className="absolute bottom-0 right-0 w-32 h-32 rounded-full bg-white/5 translate-x-10 translate-y-10"/>
+          <p className="text-xs font-bold uppercase tracking-widest opacity-70 mb-2">דיווח שבועי</p>
+          <h1 className="text-3xl font-extrabold font-headline mb-1">{report.weekStart} — {report.weekEnd}</h1>
+          <div className="flex items-center gap-3 mt-4">
+            <span className="text-3xl">{statusObj?.emoji}</span>
+            <div>
+              <p className="font-bold text-lg">{statusObj?.label}</p>
+              {report.statusWhy && <p className="text-sm opacity-80">{report.statusWhy}</p>}
+            </div>
+          </div>
+        </div>
+
+        {/* details card */}
+        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden mb-6">
+          <div className="px-6 divide-y-0">
+
+            <Row icon="category" label="תחומי התקדמות">
+              {areas.length ? (
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {areas.map(a=>(
+                    <span key={a.v} className="px-3 py-1 bg-primary-fixed dark:bg-blue-900/40 text-primary dark:text-blue-300 rounded-full text-sm font-semibold">{a.label}</span>
+                  ))}
+                </div>
+              ) : <span className="text-slate-400 text-sm">—</span>}
+            </Row>
+
+            <Row icon="task_alt" label="משימות שבוצעו">
+              {tasks.length ? (
+                <ul className="space-y-1 mt-1">
+                  {tasks.map((t,i)=>(
+                    <li key={i} className="flex items-start gap-2 text-sm text-on-surface dark:text-slate-200">
+                      <span className="text-emerald-500 font-bold mt-0.5">✓</span>
+                      <span>{t}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : <span className="text-slate-400 text-sm">—</span>}
+            </Row>
+
+            {report.trello && (
+              <Row icon="link" label="Trello">
+                <a href={report.trello} target="_blank" rel="noopener"
+                  className="text-sm text-primary dark:text-blue-400 hover:underline break-all">{report.trello}</a>
+              </Row>
+            )}
+
+            <Row icon="warning" label="תקוע">
+              {report.blocked === 'yes' ? (
+                <div>
+                  <span className="inline-block px-2 py-0.5 bg-red-50 dark:bg-red-900/30 text-error dark:text-red-400 text-xs font-bold rounded-full mb-1">כן</span>
+                  {report.blockedWhy && <p className="text-sm text-on-surface dark:text-slate-200">{report.blockedWhy}</p>}
+                </div>
+              ) : (
+                <span className="inline-block px-2 py-0.5 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-xs font-bold rounded-full">לא</span>
+              )}
+            </Row>
+
+            <Row icon="flag" label="פוקוס לשבוע הבא">
+              {focusList.length ? (
+                <div>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {focusList.map(f=>(
+                      <span key={f.v} className="px-3 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-full text-sm font-semibold">{f.label}</span>
+                    ))}
+                  </div>
+                  {report.focusMain && <p className="text-sm text-on-surface dark:text-slate-200 mt-2">{report.focusMain}</p>}
+                </div>
+              ) : <span className="text-slate-400 text-sm">—</span>}
+            </Row>
+
+            {report.needAviya === 'yes' && (
+              <Row icon="chat" label={`צריך מ${report.partnerName||'השותפ/ה'}`}>
+                <p className="text-sm text-on-surface dark:text-slate-200">{report.aviyaText || '?'}</p>
+              </Row>
+            )}
+
+          </div>
+        </div>
+
+        <button onClick={()=>{navigator.clipboard.writeText(window.location.href).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);})}}
+          className="w-full py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-500 dark:text-slate-400 hover:border-primary dark:hover:border-blue-400 hover:text-primary dark:hover:text-blue-400 transition-all">
+          {copied ? '✓ הלינק הועתק' : 'העתק לינק לדוח זה'}
+        </button>
+
+        <p className="text-center text-xs text-slate-400 dark:text-slate-600 mt-4">
+          דיווח שבועי © 2026
+        </p>
+      </div>
+    );
+  }
+
+  /* ─── Form Page ─── */
+  function FormPage({ partnerName }) {
+    const { start, end } = getWeekRange();
+    const [f, setF] = useState({
+      weekStart:start, weekEnd:end,
+      status:'', statusWhy:'',
+      areas:[],
+      task1:'', task2:'', task3:'',
+      trello:'',
+      blocked:'', blockedWhy:'',
+      focus:[], focusMain:'',
+      needAviya:'', aviyaText:'',
+    });
+    const set = k => v => setF(p=>({...p,[k]:v}));
+    const [sent, setSent] = useState(false);
+    const [noUrl, setNoUrl] = useState(false);
+
+    function handleSend() {
+      const baseUrl = LS.getBaseUrl().trim();
+      if (!baseUrl) { setNoUrl(true); setTimeout(()=>setNoUrl(false),4000); return; }
+
+      const reportData = {
+        ...f,
+        tasks: [f.task1,f.task2,f.task3].filter(Boolean),
+        partnerName,
+        sentAt: new Date().toISOString(),
+      };
+      const encoded = encodeReport(reportData);
+      const link = `${baseUrl.replace(/\/$/, '')}#r=${encoded}`;
+
+      LS.addReport({ id:Date.now(), ...reportData, link });
+      setSent(true);
+      setTimeout(()=>setSent(false), 3000);
+      window.open(`https://wa.me/?text=${encodeURIComponent(link)}`, '_blank');
+    }
+
+    const canSend = f.status && f.areas.length > 0;
+
+    return (
+      <div className="space-y-8">
+        <header className="text-right">
+          <h1 className="text-4xl font-extrabold tracking-tight text-on-surface dark:text-slate-100 mb-2 font-headline">דיווח התקדמות שבועי</h1>
+          <p className="text-on-surface-variant dark:text-slate-400 text-lg">סכם את פעילות השבוע האחרון ב-3 דקות.</p>
+        </header>
+
+        {/* 01 dates */}
+        <SectionCard n="01" title="פרטי השבוע">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-end">
+            <div className="space-y-2">
+              <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">שבוע (מתאריך - עד תאריך)</span>
+              <div className="flex items-center gap-4">
+                <input type="date" value={f.weekStart} onChange={e=>set('weekStart')(e.target.value)}
+                  className="w-full bg-transparent border-0 border-b-2 border-slate-200 dark:border-slate-600 focus:border-primary dark:focus:border-blue-400 text-on-surface dark:text-slate-100 text-sm py-2 transition-colors"/>
+                <span className="text-slate-400 shrink-0">עד</span>
+                <input type="date" value={f.weekEnd} onChange={e=>set('weekEnd')(e.target.value)}
+                  className="w-full bg-transparent border-0 border-b-2 border-slate-200 dark:border-slate-600 focus:border-primary dark:focus:border-blue-400 text-on-surface dark:text-slate-100 text-sm py-2 transition-colors"/>
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+
+        {/* 02 status */}
+        <SectionCard n="02" title="מצב השבוע">
+          <div className="space-y-6">
+            <StatusRadio value={f.status} onChange={set('status')}/>
+            {f.status && (
+              <div className="bg-white dark:bg-slate-700 p-6 rounded-lg ambient-shadow fade-in">
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">למה? (אופציונלי)</label>
+                <UInput placeholder="פירוט קצר על תחושת השבוע..." value={f.statusWhy} onChange={set('statusWhy')} maxLength={120}/>
+              </div>
+            )}
+          </div>
+        </SectionCard>
+
+        {/* 03 areas */}
+        <SectionCard n="03" title="תחומי התקדמות">
+          <AreaCheckboxes values={f.areas} onChange={set('areas')}/>
+        </SectionCard>
+
+        {/* 04 tasks */}
+        <SectionCard n="04" title="משימות שבוצעו">
+          <div className="space-y-6">
+            <div className="space-y-4">
+              {[['task1','01','משימה עיקרית שבוצעה...'],['task2','02','משימה נוספת...'],['task3','03','משימה שלישית...']].map(([k,n,ph])=>(
+                <div key={k} className="flex items-center gap-4">
+                  <span className="text-slate-400 font-mono text-sm shrink-0">{n}</span>
+                  <UInput placeholder={ph} value={f[k]} onChange={set(k)} maxLength={120}/>
+                </div>
+              ))}
+            </div>
+            <div className="bg-blue-50/50 dark:bg-blue-900/20 p-4 rounded-lg flex items-center gap-3 border border-blue-100 dark:border-blue-800">
+              <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 shrink-0 text-xl">link</span>
+              <input type="url" value={f.trello} onChange={e=>set('trello')(e.target.value)}
+                placeholder="קישור ללוח Trello (אופציונלי)"
+                className="flex-1 bg-transparent border-0 focus:ring-0 text-sm text-blue-700 dark:text-blue-300 placeholder:text-blue-300 dark:placeholder:text-blue-600"/>
+            </div>
+          </div>
+        </SectionCard>
+
+        {/* 05 blocked */}
+        <SectionCard n="05" title="האם יש משהו שתקוע?">
+          <div className="space-y-6">
+            <YesNo value={f.blocked} onChange={set('blocked')} warningOnYes={true}/>
+            {f.blocked==='yes' && (
+              <div className="bg-red-50/60 dark:bg-red-900/20 p-6 rounded-lg border border-red-100 dark:border-red-800 fade-in">
+                <label className="block text-sm font-bold text-error dark:text-red-400 mb-2">מה נתקע?</label>
+                <UInput placeholder="פרט מה מעכב את ההתקדמות..." value={f.blockedWhy} onChange={set('blockedWhy')} maxLength={200}/>
+              </div>
+            )}
+          </div>
+        </SectionCard>
+
+        {/* 06 focus */}
+        <SectionCard n="06" title="פוקוס לשבוע הבא">
+          <div className="space-y-8">
+            <FocusChips values={f.focus} onChange={set('focus')}/>
+            <div className="bg-white dark:bg-slate-700 p-6 rounded-lg ambient-shadow">
+              <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">מה הדבר המרכזי?</label>
+              <UInput placeholder="המטרה הכי חשובה לשבוע הקרוב..." value={f.focusMain} onChange={set('focusMain')} maxLength={100}/>
+            </div>
+          </div>
+        </SectionCard>
+
+        {/* 07 need from partner */}
+        <SectionCard n="07" title={`צריך משהו מ${partnerName}?`}>
+          <div className="space-y-6">
+            <YesNo value={f.needAviya} onChange={set('needAviya')}/>
+            {f.needAviya==='yes' && (
+              <div className="bg-blue-50/40 dark:bg-blue-900/20 p-6 rounded-lg border border-blue-100 dark:border-blue-800 fade-in">
+                <label className="block text-sm font-bold text-primary dark:text-blue-400 mb-2">שאלה / החלטה נדרשת</label>
+                <UInput placeholder="מה תרצה לשאול או לקדם?" value={f.aviyaText} onChange={set('aviyaText')} maxLength={200}/>
+              </div>
+            )}
+          </div>
+        </SectionCard>
+
+        {/* actions */}
+        <div className="flex items-center justify-between pt-8 border-t border-slate-100 dark:border-slate-700">
+          <div className="text-sm">
+            {noUrl ? (
+              <span className="text-error dark:text-red-400 font-bold fade-in">הגדר כתובת אתר בהגדרות קודם ↓</span>
+            ) : (
+              <span className="text-slate-400 dark:text-slate-500 text-xs">השותפ/ה יקבלו לינק לדף הדוח</span>
+            )}
+          </div>
+          <button onClick={handleSend} disabled={!canSend}
+            className={`px-10 py-4 rounded-xl font-extrabold text-base transition-all text-white
+              ${!canSend ? 'bg-slate-200 dark:bg-slate-700 cursor-not-allowed' : sent ? 'bg-emerald-500' : 'bg-gradient-to-br from-primary to-primary-container shadow-xl shadow-blue-700/30 hover:scale-[1.02] active:scale-95'}`}>
+            {sent ? `✓ נשלח ל${partnerName}!` : `שלח ל${partnerName}`}
+          </button>
+        </div>
+        {!canSend && (
+          <p className="text-center text-xs text-slate-400 dark:text-slate-500 -mt-4">בחר מצב שבוע ולפחות תחום אחד כדי לשלוח</p>
+        )}
+      </div>
+    );
+  }
+
+  /* ─── Dashboard Page ─── */
+  function DashboardPage() {
+    const [reports, setReports] = useState(LS.getReports());
+    const [expanded, setExpanded] = useState(null);
+
+    function remove(id) { LS.deleteReport(id); setReports(LS.getReports()); }
+
+    if (reports.length === 0) return (
+      <div>
+        <h1 className="text-4xl font-extrabold tracking-tight text-on-surface dark:text-slate-100 mb-8 font-headline">לוח בקרה</h1>
+        <EmptyState icon="bar_chart" title="אין דוחות עדיין" sub="לאחר שליחת הדוח הראשון, הוא יופיע כאן אוטומטית."/>
+      </div>
+    );
+
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-8">
+          <h1 className="text-4xl font-extrabold tracking-tight text-on-surface dark:text-slate-100 font-headline">לוח בקרה</h1>
+          <span className="text-sm text-slate-400 dark:text-slate-500">{reports.length} דוחות</span>
+        </div>
+        <div className="space-y-4">
+          {reports.map(r => {
+            const statusObj = STATUS_OPTS.find(o=>o.v===r.status);
+            const isOpen = expanded===r.id;
+            return (
+              <div key={r.id} className="bg-surface-container-low dark:bg-slate-800 rounded-xl overflow-hidden">
+                <div className="flex items-center gap-4 px-6 py-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                  onClick={()=>setExpanded(isOpen?null:r.id)}>
+                  <span className="text-2xl">{statusObj?.emoji ?? '📋'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-on-surface dark:text-slate-100 text-sm">{r.weekStart} — {r.weekEnd}</p>
+                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                      {statusObj?.label} · {AREA_OPTS.filter(o=>r.areas?.includes(o.v)).map(o=>o.label).join(', ')}
+                    </p>
+                  </div>
+                  <span className="material-symbols-outlined text-slate-400 dark:text-slate-500 transition-transform" style={{transform:isOpen?'rotate(180deg)':'none'}}>expand_more</span>
+                  <button onClick={e=>{e.stopPropagation();remove(r.id);}}
+                    className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-slate-300 hover:text-error transition-colors">
+                    <span className="material-symbols-outlined text-base">delete</span>
+                  </button>
+                </div>
+                {isOpen && (
+                  <div className="px-6 pb-6 fade-in space-y-3">
+                    {r.link && (
+                      <div className="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg">
+                        <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 text-base">link</span>
+                        <a href={r.link} target="_blank" className="text-xs text-blue-700 dark:text-blue-300 hover:underline truncate flex-1">{r.link}</a>
+                        <button onClick={()=>navigator.clipboard.writeText(r.link)}
+                          className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline shrink-0">העתק</button>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div className="bg-white dark:bg-slate-700 p-3 rounded-lg">
+                        <p className="text-xs text-slate-400 mb-1">תחומים</p>
+                        <p className="font-semibold text-on-surface dark:text-slate-100">
+                          {AREA_OPTS.filter(o=>r.areas?.includes(o.v)).map(o=>o.label).join(' · ') || '—'}
+                        </p>
+                      </div>
+                      <div className="bg-white dark:bg-slate-700 p-3 rounded-lg">
+                        <p className="text-xs text-slate-400 mb-1">תקוע</p>
+                        <p className={`font-semibold ${r.blocked==='yes'?'text-error dark:text-red-400':'text-emerald-600 dark:text-emerald-400'}`}>
+                          {r.blocked==='yes'?'כן':'לא'}
+                        </p>
+                      </div>
+                    </div>
+                    {r.tasks?.length>0 && (
+                      <div className="bg-white dark:bg-slate-700 p-3 rounded-lg">
+                        <p className="text-xs text-slate-400 mb-2">משימות</p>
+                        <ul className="space-y-1">
+                          {r.tasks.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── Projects Page ─── */
+  function ProjectsPage() {
+    const [projects, setProjects] = useState(LS.getProjects());
+    const [form, setForm] = useState({ name:'', status:'active', desc:'' });
+    const [adding, setAdding] = useState(false);
+
+    function save(updated) { setProjects(updated); LS.saveProjects(updated); }
+    function add() {
+      if (!form.name.trim()) return;
+      save([{ id:Date.now(), ...form }, ...projects]);
+      setForm({ name:'', status:'active', desc:'' });
+      setAdding(false);
+    }
+    function cycleStatus(id) {
+      const order=['active','paused','done'];
+      save(projects.map(p=>p.id===id?{...p,status:order[(order.indexOf(p.status)+1)%3]}:p));
+    }
+    function remove(id) { save(projects.filter(p=>p.id!==id)); }
+
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-8">
+          <h1 className="text-4xl font-extrabold tracking-tight text-on-surface dark:text-slate-100 font-headline">פרויקטים</h1>
+          <button onClick={()=>setAdding(v=>!v)}
+            className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-xl font-bold text-sm hover:bg-blue-800 transition-colors">
+            <span className="material-symbols-outlined text-base">{adding?'close':'add'}</span>
+            {adding?'ביטול':'פרויקט חדש'}
+          </button>
+        </div>
+        {adding && (
+          <div className="bg-surface-container-low dark:bg-slate-800 rounded-xl p-6 mb-6 fade-in space-y-4 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-full h-1 bg-surface-tint"/>
+            <div>
+              <label className="text-xs font-bold text-on-surface-variant dark:text-slate-400 uppercase tracking-widest mb-2 block">שם הפרויקט</label>
+              <UInput placeholder="למשל: אתר לקוח, מודול תשלומים..." value={form.name} onChange={v=>setForm(f=>({...f,name:v}))} maxLength={80}/>
+            </div>
+            <div>
+              <label className="text-xs font-bold text-on-surface-variant dark:text-slate-400 uppercase tracking-widest mb-2 block">סטטוס</label>
+              <div className="flex gap-2">
+                {PROJECT_STATUSES.map(s=>(
+                  <div key={s.v} onClick={()=>setForm(f=>({...f,status:s.v}))}
+                    className={`px-3 py-1.5 rounded-full text-xs font-bold cursor-pointer border-2 transition-all ${form.status===s.v?'border-primary dark:border-blue-400':'border-transparent'} ${s.color}`}>
+                    {s.label}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-bold text-on-surface-variant dark:text-slate-400 uppercase tracking-widest mb-2 block">תיאור (אופציונלי)</label>
+              <UInput placeholder="על מה מדובר..." value={form.desc} onChange={v=>setForm(f=>({...f,desc:v}))} maxLength={200}/>
+            </div>
+            <button onClick={add} className="w-full py-3 bg-primary text-white rounded-xl font-bold text-sm hover:bg-blue-800 transition-colors">הוסף פרויקט</button>
+          </div>
+        )}
+        {projects.length===0 && !adding ? (
+          <EmptyState icon="assignment" title="אין פרויקטים עדיין" sub="הוסיפו פרויקט ראשון כדי לעקוב אחר ההתקדמות."/>
+        ) : (
+          <div className="space-y-3">
+            {projects.map(p=>{
+              const st=PROJECT_STATUSES.find(s=>s.v===p.status);
+              return (
+                <div key={p.id} className="bg-surface-container-low dark:bg-slate-800 rounded-xl px-6 py-4 flex items-center gap-4">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-on-surface dark:text-slate-100 text-sm">{p.name}</p>
+                    {p.desc && <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 truncate">{p.desc}</p>}
+                  </div>
+                  <div onClick={()=>cycleStatus(p.id)}
+                    className={`px-3 py-1 rounded-full text-xs font-bold cursor-pointer hover:opacity-80 transition-all ${st?.color}`}>
+                    {st?.label}
+                  </div>
+                  <button onClick={()=>remove(p.id)}
+                    className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-slate-300 hover:text-error transition-colors">
+                    <span className="material-symbols-outlined text-base">delete</span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ─── Settings Page ─── */
+  function SettingsPage({ dark, toggleDark, partnerName, setPartnerName }) {
+    const [nameVal, setNameVal]   = useState(partnerName);
+    const [urlVal, setUrlVal]     = useState(LS.getBaseUrl());
+    const [savedName, setSavedName] = useState(false);
+    const [savedUrl, setSavedUrl]   = useState(false);
+    const [cleared, setCleared]     = useState(false);
+
+    function saveName() { LS.setPartner(nameVal); setPartnerName(nameVal); setSavedName(true); setTimeout(()=>setSavedName(false),2000); }
+    function saveUrl()  { LS.setBaseUrl(urlVal); setSavedUrl(true); setTimeout(()=>setSavedUrl(false),2000); }
+    function clearAll() { LS.clearAll(); setCleared(true); setTimeout(()=>setCleared(false),2500); }
+
+    return (
+      <div className="max-w-lg">
+        <h1 className="text-4xl font-extrabold tracking-tight text-on-surface dark:text-slate-100 mb-8 font-headline">הגדרות</h1>
+        <div className="space-y-6">
+
+          {/* hosted url — most important */}
+          <div className="bg-surface-container-low dark:bg-slate-800 rounded-xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-full h-1 bg-surface-tint"/>
+            <div className="p-6 space-y-4">
+              <div>
+                <p className="font-bold text-on-surface dark:text-slate-100 text-sm mb-0.5">כתובת האתר המאוחסן</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500">הכתובת שבה הקובץ weekly-report.html מאוחסן אונליין. השותפ/ה יקבלו לינק לכתובת הזו עם הדוח מקודד.</p>
+              </div>
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <UInput placeholder="https://yourname.github.io/weekly-report.html" value={urlVal} onChange={setUrlVal} type="url"/>
+                </div>
+                <button onClick={saveUrl}
+                  className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors shrink-0 ${savedUrl?'bg-emerald-500 text-white':'bg-primary text-white hover:bg-blue-800'}`}>
+                  {savedUrl?'✓':'שמור'}
+                </button>
+              </div>
+              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 text-xs text-slate-600 dark:text-slate-400 space-y-1.5">
+                <p className="font-bold text-primary dark:text-blue-400">איפה לאחסן בחינם?</p>
+                <p>1. פתח חשבון ב-<strong>GitHub</strong> ← צור repo ← העלה את הקובץ</p>
+                <p>2. Settings → Pages → Deploy from branch → main</p>
+                <p>3. הכתובת תהיה: <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">username.github.io/repo-name/weekly-report.html</code></p>
+              </div>
+            </div>
+          </div>
+
+          {/* partner name */}
+          <div className="bg-surface-container-low dark:bg-slate-800 rounded-xl p-6 space-y-4">
+            <div>
+              <p className="font-bold text-on-surface dark:text-slate-100 text-sm mb-0.5">שם השותפ/ה</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500">משמש בכפתור השליחה ובשאלה "צריך משהו מ..."</p>
+            </div>
+            <div className="flex gap-3">
+              <div className="flex-1"><UInput placeholder="שם השותפ/ה" value={nameVal} onChange={setNameVal} maxLength={30}/></div>
+              <button onClick={saveName}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors shrink-0 ${savedName?'bg-emerald-500 text-white':'bg-primary text-white hover:bg-blue-800'}`}>
+                {savedName?'✓':'שמור'}
+              </button>
+            </div>
+          </div>
+
+          {/* dark mode */}
+          <div className="bg-surface-container-low dark:bg-slate-800 rounded-xl p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-bold text-on-surface dark:text-slate-100 text-sm">מצב לילה</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">רקע כהה לנוח לעיניים</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-slate-400 dark:text-slate-500 text-xl">{dark?'dark_mode':'light_mode'}</span>
+                <Toggle value={dark} onChange={toggleDark}/>
+              </div>
+            </div>
+          </div>
+
+          {/* clear data */}
+          <div className="bg-surface-container-low dark:bg-slate-800 rounded-xl p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-bold text-on-surface dark:text-slate-100 text-sm">איפוס נתונים</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">מחיקת כל הדוחות והפרויקטים</p>
+              </div>
+              <button onClick={clearAll}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors ${cleared?'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400':'bg-red-50 dark:bg-red-900/20 text-error dark:text-red-400 hover:bg-red-100'}`}>
+                {cleared?'✓ נמחק':'אפס הכל'}
+              </button>
+            </div>
+          </div>
+
+          <p className="text-xs text-center text-slate-400 dark:text-slate-600 pt-2">כל הנתונים נשמרים מקומית בדפדפן בלבד.</p>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── nav items ─── */
+  const NAV = [
+    { id:'dashboard', icon:'bar_chart',   label:'לוח בקרה' },
+    { id:'form',      icon:'description', label:'דיווח'     },
+    { id:'projects',  icon:'assignment',  label:'פרויקטים' },
+    { id:'settings',  icon:'settings',    label:'הגדרות'   },
+  ];
+
+  /* ─── App ─── */
+  function App() {
+    const hashReport = getHashReport();
+    const [dark, setDark]               = useState(LS.getDark());
+    const [page, setPage]               = useState('form');
+    const [partnerName, setPartnerName] = useState(LS.getPartner());
+
+    function toggleDark() { const n=!dark; setDark(n); LS.setDark(n); }
+    function navigate(p)  { setPage(p); window.scrollTo({top:0,behavior:'smooth'}); }
+
+    /* ── recipient view (hash contains report) ── */
+    if (hashReport) {
+      return (
+        <div className={dark?'dark':''}>
+          <div className="min-h-screen bg-surface dark:bg-slate-950 py-10 px-4 transition-colors">
+            <div className="max-w-xl mx-auto mb-6 flex items-center justify-between">
+              <button onClick={toggleDark}
+                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+                <span className="material-symbols-outlined text-slate-500 dark:text-slate-400">{dark?'light_mode':'dark_mode'}</span>
+              </button>
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary dark:text-blue-400">description</span>
+                <span className="font-bold text-slate-700 dark:text-slate-200 font-headline">דיווח שבועי</span>
+              </div>
+            </div>
+            <ReportView report={hashReport}/>
+          </div>
+        </div>
+      );
+    }
+
+    /* ── sender view (normal app) ── */
+    return (
+      <div className={dark?'dark':''}>
+        <div className="min-h-screen flex flex-col bg-surface dark:bg-slate-950 text-on-surface dark:text-slate-100 transition-colors">
+
+          {/* TopAppBar */}
+          <nav className="fixed top-0 w-full z-50 glass-panel bg-white/80 dark:bg-slate-900/80 shadow-sm dark:shadow-slate-900/50 border-b border-transparent dark:border-slate-800">
+            <div className="flex flex-row-reverse justify-between items-center px-6 py-4">
+              <div className="flex items-center gap-3">
+                <span className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 font-headline">דיווח שבועי</span>
+                <span className="material-symbols-outlined text-blue-700 dark:text-blue-400">description</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="hidden md:flex flex-row-reverse gap-2 items-center">
+                  {NAV.map(item=>(
+                    <button key={item.id} onClick={()=>navigate(item.id)}
+                      className={`px-4 py-1.5 rounded-lg font-medium text-sm transition-colors
+                        ${page===item.id ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100/50 dark:hover:bg-slate-800'}`}>
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={toggleDark}
+                  className="p-2 hover:bg-slate-100/50 dark:hover:bg-slate-800 rounded-full transition-colors">
+                  <span className="material-symbols-outlined text-slate-600 dark:text-slate-400">{dark?'light_mode':'dark_mode'}</span>
+                </button>
+              </div>
+            </div>
+          </nav>
+
+          {/* Sidebar */}
+          <aside className="hidden lg:flex fixed right-0 top-0 h-full w-64 bg-slate-50 dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 flex-col items-end text-right pt-24 z-40">
+            <div className="px-6 mb-8 w-full">
+              <h2 className="text-lg font-black text-blue-800 dark:text-blue-400 font-headline">השותפות</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-500 font-bold uppercase tracking-wider">ניהול שוטף</p>
+            </div>
+            <nav className="w-full flex flex-col">
+              {NAV.map(item=>(
+                <button key={item.id} onClick={()=>navigate(item.id)}
+                  className={`flex flex-row-reverse items-center gap-4 px-6 py-4 transition-all w-full text-right
+                    ${page===item.id
+                      ? 'text-blue-700 dark:text-blue-400 font-bold border-r-4 border-blue-700 dark:border-blue-400 bg-blue-50/50 dark:bg-blue-900/20'
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-blue-50 dark:hover:bg-slate-800'}`}>
+                  <span className="material-symbols-outlined">{item.icon}</span>
+                  <span className="font-bold text-sm tracking-wide">{item.label}</span>
+                </button>
+              ))}
+            </nav>
+          </aside>
+
+          {/* Content */}
+          <main className="flex-1 lg:pr-64 pt-24 pb-24 md:pb-16 px-4 md:px-8 max-w-5xl mx-auto w-full">
+            {page==='form'      && <FormPage partnerName={partnerName}/>}
+            {page==='dashboard' && <DashboardPage/>}
+            {page==='projects'  && <ProjectsPage/>}
+            {page==='settings'  && <SettingsPage dark={dark} toggleDark={toggleDark} partnerName={partnerName} setPartnerName={setPartnerName}/>}
+          </main>
+
+          {/* Footer */}
+          <footer className="w-full border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 lg:pr-64">
+            <div className="flex flex-row-reverse justify-between items-center px-8 py-5 max-w-5xl mx-auto">
+              <span className="text-sm font-bold text-slate-400 dark:text-slate-600">דוח שבועי © 2026</span>
+              <span className="text-xs text-slate-300 dark:text-slate-700">נתונים נשמרים מקומית</span>
+            </div>
+          </footer>
+
+          {/* Mobile nav */}
+          <nav className="md:hidden fixed bottom-0 left-0 w-full glass-panel bg-white/90 dark:bg-slate-900/90 border-t border-slate-100 dark:border-slate-800 flex justify-around items-center py-2 px-2 z-50">
+            {NAV.map(item=>(
+              <button key={item.id} onClick={()=>navigate(item.id)}
+                className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition-colors
+                  ${page===item.id ? 'text-blue-700 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`}>
+                <span className="material-symbols-outlined text-xl" style={page===item.id?{fontVariationSettings:"'FILL' 1"}:{}}>{item.icon}</span>
+                <span className="text-[10px] font-bold">{item.label}</span>
+              </button>
+            ))}
+          </nav>
+
+        </div>
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
