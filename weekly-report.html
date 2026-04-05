@@ -405,17 +405,6 @@
       </div>
     );
   }
-        </div>
-
-        <button onClick={()=>{navigator.clipboard.writeText(window.location.href).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);})}}
-          className="w-full py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-500 dark:text-slate-400 hover:border-primary dark:hover:border-blue-400 hover:text-primary dark:hover:text-blue-400 transition-all">
-          {copied ? '✓ הלינק הועתק' : 'העתק לינק לדוח זה'}
-        </button>
-
-        <p className="text-center text-xs text-slate-400 dark:text-slate-600 mt-4">
-          דיווח שבועי © 2026
-        </p>
-      </div>
     );
   }
 
