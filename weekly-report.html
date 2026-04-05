@@ -53,7 +53,7 @@
 <script type="text/babel">
   const { useState, useEffect } = React;
 
-  /* ─── encode / decode report in URL hash ─── */
+  /* ─── encode / decode report in URL query param ─── */
   function encodeReport(data) {
     try { return btoa(unescape(encodeURIComponent(JSON.stringify(data)))); }
     catch { return null; }
@@ -63,9 +63,9 @@
     catch { return null; }
   }
   function getHashReport() {
-    const h = window.location.hash;
-    const m = h.match(/[#&]r=([^&]+)/);
-    return m ? decodeReport(m[1]) : null;
+    const params = new URLSearchParams(window.location.search);
+    const r = params.get('r');
+    return r ? decodeReport(r) : null;
   }
 
   /* ─── storage ─── */
@@ -359,22 +359,40 @@
       needAviya:'', aviyaText:'',
     });
     const set = k => v => setF(p=>({...p,[k]:v}));
-    const [sent, setSent] = useState(false);
-    const [noUrl, setNoUrl] = useState(false);
+    const [sent, setSent]     = useState(false);
+    const [saved, setSaved]   = useState(false);
+    const [noUrl, setNoUrl]   = useState(false);
 
-    function handleSend() {
-      const baseUrl = LS.getBaseUrl().trim();
-      if (!baseUrl) { setNoUrl(true); setTimeout(()=>setNoUrl(false),4000); return; }
-
-      const reportData = {
+    function buildReportData() {
+      return {
         ...f,
         tasks: [f.task1,f.task2,f.task3].filter(Boolean),
         partnerName,
         sentAt: new Date().toISOString(),
       };
-      const encoded = encodeReport(reportData);
-      const link = `${baseUrl.replace(/\/$/, '')}#r=${encoded}`;
+    }
 
+    function handleSave() {
+      const reportData = buildReportData();
+      LS.addReport({ id:Date.now(), ...reportData });
+      setSaved(true);
+      setTimeout(()=>setSaved(false), 2000);
+    }
+
+    function handleSend() {
+      const baseUrl = LS.getBaseUrl().trim();
+      const reportData = buildReportData();
+      const encoded = encodeReport(reportData);
+
+      if (!baseUrl) {
+        // שמור לפחות היסטורית, ושלח טקסט רגיל
+        LS.addReport({ id:Date.now(), ...reportData });
+        setNoUrl(true);
+        setTimeout(()=>setNoUrl(false), 4000);
+        return;
+      }
+
+      const link = `${baseUrl.replace(/\/$/, '')}?r=${encoded}`;
       LS.addReport({ id:Date.now(), ...reportData, link });
       setSent(true);
       setTimeout(()=>setSent(false), 3000);
@@ -483,11 +501,16 @@
 
         {/* actions */}
         <div className="flex items-center justify-between pt-8 border-t border-slate-100 dark:border-slate-700">
-          <div className="text-sm">
-            {noUrl ? (
-              <span className="text-error dark:text-red-400 font-bold fade-in">הגדר כתובת אתר בהגדרות קודם ↓</span>
-            ) : (
-              <span className="text-slate-400 dark:text-slate-500 text-xs">השותפ/ה יקבלו לינק לדף הדוח</span>
+          <div className="flex items-center gap-3">
+            <button onClick={handleSave} disabled={!canSend}
+              className={`font-bold text-sm transition-colors ${
+                !canSend  ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                : saved   ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-on-surface-variant dark:text-slate-400 hover:text-primary dark:hover:text-blue-400'}`}>
+              {saved ? '✓ נשמר' : 'שמור טיוטה'}
+            </button>
+            {noUrl && (
+              <span className="text-error dark:text-red-400 text-xs font-bold fade-in">הגדר כתובת בהגדרות לשליחת לינק</span>
             )}
           </div>
           <button onClick={handleSend} disabled={!canSend}
