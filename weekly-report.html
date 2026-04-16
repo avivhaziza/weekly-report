@@ -124,6 +124,8 @@
     deleteReport: id => { const a = LS.getReports().filter(r=>r.id!==id); localStorage.setItem('wr-reports', JSON.stringify(a)); },
     getProjects:  () => JSON.parse(localStorage.getItem('wr-projects') || '[]'),
     saveProjects: v  => localStorage.setItem('wr-projects', JSON.stringify(v)),
+    getTrello:    () => JSON.parse(localStorage.getItem('wr-trello') || '{}'),
+    setTrello:    v  => localStorage.setItem('wr-trello', JSON.stringify(v)),
     clearAll:     () => { localStorage.removeItem('wr-reports'); localStorage.removeItem('wr-projects'); },
   };
 
@@ -413,21 +415,55 @@
       weekStart:start, weekEnd:end,
       status:'', statusWhy:'',
       areas:[],
-      task1:'', task2:'', task3:'',
+      tasks:[''],
       trello:'',
       blocked:'', blockedWhy:'',
       focus:[], focusMain:'',
       needAviya:'', aviyaText:'',
     });
     const set = k => v => setF(p=>({...p,[k]:v}));
-    const [sent, setSent]     = useState(false);
-    const [saved, setSaved]   = useState(false);
-    const [noUrl, setNoUrl]   = useState(false);
+    const [sent, setSent]       = useState(false);
+    const [saved, setSaved]     = useState(false);
+    const [noUrl, setNoUrl]     = useState(false);
+    const [importing, setImporting] = useState(false);
+    const [importErr, setImportErr] = useState('');
+
+    // task list helpers
+    function setTask(i, v) { setF(p=>{ const t=[...p.tasks]; t[i]=v; return {...p,tasks:t}; }); }
+    function addTask()     { setF(p=>({...p,tasks:[...p.tasks,'']})); }
+    function removeTask(i) { setF(p=>({...p,tasks:p.tasks.filter((_,idx)=>idx!==i)})); }
+
+    async function importFromTrello() {
+      const cfg = LS.getTrello();
+      if (!cfg.key || !cfg.token || !cfg.listId) {
+        setImportErr('הגדר API Key, Token ורשימה בהגדרות קודם');
+        setTimeout(()=>setImportErr(''),4000); return;
+      }
+      setImporting(true); setImportErr('');
+      try {
+        const res = await fetch(
+          `https://api.trello.com/1/lists/${cfg.listId}/cards?key=${cfg.key}&token=${cfg.token}&fields=name,dateLastActivity`
+        );
+        if (!res.ok) throw new Error('שגיאת Trello');
+        const cards = await res.json();
+        // filter cards active this week
+        const weekStart = new Date(f.weekStart);
+        const weekEnd   = new Date(f.weekEnd); weekEnd.setHours(23,59,59);
+        const thisWeek  = cards.filter(c => {
+          const d = new Date(c.dateLastActivity);
+          return d >= weekStart && d <= weekEnd;
+        });
+        const names = thisWeek.map(c=>c.name);
+        if (!names.length) { setImportErr('לא נמצאו כרטיסים שהושלמו השבוע'); setTimeout(()=>setImportErr(''),4000); }
+        else setF(p=>({ ...p, tasks: [...names, ''] }));
+      } catch(e) { setImportErr(e.message||'שגיאה לא ידועה'); setTimeout(()=>setImportErr(''),4000); }
+      setImporting(false);
+    }
 
     function buildReportData() {
       return {
         ...f,
-        tasks: [f.task1,f.task2,f.task3].filter(Boolean),
+        tasks: f.tasks.filter(Boolean),
         partnerName,
         sentAt: new Date().toISOString(),
       };
@@ -505,16 +541,42 @@
 
         {/* 04 tasks */}
         <SectionCard n="04" title="משימות שבוצעו">
-          <div className="space-y-6">
-            <div className="space-y-4">
-              {[['task1','01','משימה עיקרית שבוצעה...'],['task2','02','משימה נוספת...'],['task3','03','משימה שלישית...']].map(([k,n,ph])=>(
-                <div key={k} className="flex items-center gap-4">
-                  <span className="text-slate-400 font-mono text-sm shrink-0">{n}</span>
-                  <UInput placeholder={ph} value={f[k]} onChange={set(k)} maxLength={120}/>
+          <div className="space-y-4">
+            {/* Trello import row */}
+            <div className="flex items-center gap-3">
+              <button onClick={importFromTrello} disabled={importing}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-primary dark:border-blue-400 text-primary dark:text-blue-400 text-sm font-bold hover:bg-primary-fixed dark:hover:bg-blue-900/30 transition-all disabled:opacity-50">
+                <span className="material-symbols-outlined text-base">{importing?'sync':'download'}</span>
+                {importing ? 'מייבא...' : 'ייבא מ-Trello'}
+              </button>
+              {importErr && <span className="text-xs text-error dark:text-red-400 fade-in">{importErr}</span>}
+              {!importErr && <span className="text-xs text-slate-400 dark:text-slate-500">מושך כרטיסים שהושלמו השבוע הזה</span>}
+            </div>
+
+            {/* dynamic task list */}
+            <div className="space-y-2">
+              {f.tasks.map((t,i)=>(
+                <div key={i} className="flex items-center gap-3">
+                  <span className="text-slate-300 dark:text-slate-600 font-mono text-sm shrink-0 w-5 text-left">{i+1}</span>
+                  <div className="flex-1">
+                    <UInput placeholder={i===0?'משימה ראשונה...':'משימה נוספת...'} value={t} onChange={v=>setTask(i,v)} maxLength={200}/>
+                  </div>
+                  {f.tasks.length > 1 && (
+                    <button onClick={()=>removeTask(i)} className="text-slate-300 dark:text-slate-600 hover:text-error transition-colors shrink-0">
+                      <span className="material-symbols-outlined text-base">close</span>
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
-            <div className="bg-blue-50/50 dark:bg-blue-900/20 p-4 rounded-lg flex items-center gap-3 border border-blue-100 dark:border-blue-800">
+
+            <button onClick={addTask}
+              className="flex items-center gap-2 text-sm text-slate-400 dark:text-slate-500 hover:text-primary dark:hover:text-blue-400 transition-colors">
+              <span className="material-symbols-outlined text-base">add</span>
+              הוסף משימה
+            </button>
+
+            <div className="bg-blue-50/50 dark:bg-blue-900/20 p-3 rounded-lg flex items-center gap-3 border border-blue-100 dark:border-blue-800 mt-2">
               <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 shrink-0 text-xl">link</span>
               <input type="url" value={f.trello} onChange={e=>set('trello')(e.target.value)}
                 placeholder="קישור ללוח Trello (אופציונלי)"
@@ -601,12 +663,42 @@
       </div>
     );
 
+    // graph data — last 8 weeks, tasks per week
+    const graphData = [...reports].reverse().slice(-8).map(r=>({
+      label: r.weekStart?.slice(5) ?? '',
+      count: r.tasks?.length ?? 0,
+      status: r.status,
+    }));
+    const maxCount = Math.max(...graphData.map(d=>d.count), 1);
+    const statusBar = { excellent:'bg-emerald-400', good:'bg-blue-400', medium:'bg-amber-400', weak:'bg-red-400' };
+
     return (
       <div>
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-4xl font-extrabold tracking-tight text-on-surface dark:text-slate-100 font-headline">לוח בקרה</h1>
           <span className="text-sm text-slate-400 dark:text-slate-500">{reports.length} דוחות</span>
         </div>
+
+        {/* progress graph */}
+        {graphData.length > 1 && (
+          <div className="bg-surface-container-low dark:bg-slate-800 rounded-xl p-6 mb-6">
+            <p className="text-xs font-bold text-on-surface-variant dark:text-slate-400 uppercase tracking-widest mb-4">משימות שבוצעו לאורך זמן</p>
+            <div className="flex items-end gap-2 h-28">
+              {graphData.map((d,i)=>(
+                <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                  <span className="text-xs font-bold text-on-surface dark:text-slate-100">{d.count||''}</span>
+                  <div
+                    title={`${d.label}: ${d.count} משימות`}
+                    style={{height:`${Math.max((d.count/maxCount)*80,4)}px`}}
+                    className={`w-full rounded-t-md transition-all ${statusBar[d.status]||'bg-slate-300 dark:bg-slate-600'}`}/>
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500">{d.label}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">הצבע = מצב השבוע · 🟢 מעולה · 🔵 טוב · 🟡 בינוני · 🔴 חלש</p>
+          </div>
+        )}
+
         <div className="space-y-4">
           {reports.map(r => {
             const statusObj = STATUS_OPTS.find(o=>o.v===r.status);
@@ -761,6 +853,44 @@
     const [savedUrl, setSavedUrl]   = useState(false);
     const [cleared, setCleared]     = useState(false);
 
+    // Trello state
+    const trelloCfg = LS.getTrello();
+    const [trKey,   setTrKey]    = useState(trelloCfg.key    || '');
+    const [trToken, setTrToken]  = useState(trelloCfg.token  || '');
+    const [boards,  setBoards]   = useState([]);
+    const [lists,   setLists]    = useState([]);
+    const [trBoard, setTrBoard]  = useState(trelloCfg.boardId || '');
+    const [trList,  setTrList]   = useState(trelloCfg.listId  || '');
+    const [trLoading, setTrLoading] = useState('');
+    const [trErr,   setTrErr]    = useState('');
+    const [trSaved, setTrSaved]  = useState(false);
+
+    async function loadBoards() {
+      if (!trKey || !trToken) { setTrErr('הכנס Key ו-Token קודם'); return; }
+      setTrLoading('boards'); setTrErr('');
+      try {
+        const r = await fetch(`https://api.trello.com/1/members/me/boards?key=${trKey}&token=${trToken}&fields=name,id`);
+        if (!r.ok) throw new Error('פרטים שגויים');
+        setBoards(await r.json());
+      } catch(e) { setTrErr(e.message); }
+      setTrLoading('');
+    }
+
+    async function loadLists(boardId) {
+      setTrBoard(boardId); setTrLoading('lists'); setTrErr('');
+      try {
+        const r = await fetch(`https://api.trello.com/1/boards/${boardId}/lists?key=${trKey}&token=${trToken}&fields=name,id`);
+        if (!r.ok) throw new Error('שגיאת Trello');
+        setLists(await r.json());
+      } catch(e) { setTrErr(e.message); }
+      setTrLoading('');
+    }
+
+    function saveTrello() {
+      LS.setTrello({ key:trKey, token:trToken, boardId:trBoard, listId:trList });
+      setTrSaved(true); setTimeout(()=>setTrSaved(false), 2000);
+    }
+
     function saveName() { LS.setPartner(nameVal); setPartnerName(nameVal); setSavedName(true); setTimeout(()=>setSavedName(false),2000); }
     function saveUrl()  { LS.setBaseUrl(urlVal); setSavedUrl(true); setTimeout(()=>setSavedUrl(false),2000); }
     function clearAll() { LS.clearAll(); setCleared(true); setTimeout(()=>setCleared(false),2500); }
@@ -793,6 +923,69 @@
                 <p>2. Settings → Pages → Deploy from branch → main</p>
                 <p>3. הכתובת תהיה: <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">username.github.io/repo-name/weekly-report.html</code></p>
               </div>
+            </div>
+          </div>
+
+          {/* Trello integration */}
+          <div className="bg-surface-container-low dark:bg-slate-800 rounded-xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-full h-1 bg-blue-500"/>
+            <div className="p-6 space-y-4">
+              <div>
+                <p className="font-bold text-on-surface dark:text-slate-100 text-sm mb-0.5">חיבור Trello</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500">לאחר הגדרה, תוכל לייבא משימות ישירות לדוח בלחיצה אחת.</p>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">API Key</p>
+                  <UInput placeholder="הדבק API Key מ-trello.com/app-key" value={trKey} onChange={setTrKey}/>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Token</p>
+                  <UInput placeholder="הדבק Token" value={trToken} onChange={setTrToken}/>
+                </div>
+                <button onClick={loadBoards} disabled={trLoading==='boards'}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold hover:bg-blue-800 transition-colors disabled:opacity-50">
+                  <span className="material-symbols-outlined text-base">{trLoading==='boards'?'sync':'cloud_download'}</span>
+                  {trLoading==='boards'?'טוען...':'טען לוחות'}
+                </button>
+              </div>
+
+              {boards.length > 0 && (
+                <div className="space-y-3 fade-in">
+                  <div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">לוח</p>
+                    <select value={trBoard} onChange={e=>loadLists(e.target.value)}
+                      className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2 text-sm text-on-surface dark:text-slate-100">
+                      <option value="">בחר לוח...</option>
+                      {boards.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                  </div>
+                  {lists.length > 0 && (
+                    <div className="fade-in">
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">רשימת "הושלם" (Done)</p>
+                      <select value={trList} onChange={e=>setTrList(e.target.value)}
+                        className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2 text-sm text-on-surface dark:text-slate-100">
+                        <option value="">בחר רשימה...</option>
+                        {lists.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {trErr && <p className="text-xs text-error dark:text-red-400 fade-in">{trErr}</p>}
+
+              {trList && (
+                <button onClick={saveTrello}
+                  className={`w-full py-2.5 rounded-xl text-sm font-bold transition-colors ${trSaved?'bg-emerald-500 text-white':'bg-primary text-white hover:bg-blue-800'}`}>
+                  {trSaved ? '✓ נשמר' : 'שמור חיבור Trello'}
+                </button>
+              )}
+
+              <p className="text-xs text-slate-400 dark:text-slate-500">
+                מפתח: <a href="https://trello.com/app-key" target="_blank" className="text-primary dark:text-blue-400 hover:underline">trello.com/app-key</a>
+              </p>
             </div>
           </div>
 
