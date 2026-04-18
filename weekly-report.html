@@ -56,7 +56,6 @@
   /* ─── encode / decode report in URL ─── */
   function encodeReport(data) {
     try {
-      // compact keys to shorten URL significantly
       const c = {
         ws: data.weekStart,
         we: data.weekEnd,
@@ -66,7 +65,7 @@
         d:  (data.doneTasks        || []).filter(Boolean),
         ip: (data.inProgressTasks  || []).filter(Boolean),
         bl: (data.blockedTasks     || []).filter(Boolean),
-        t:  (data.doneTasks || data.tasks || []).filter(Boolean), // backward compat
+        t:  (data.doneTasks || data.tasks || []).filter(Boolean),
         tr: data.trello     || undefined,
         b:  data.blocked === 'yes' ? 1 : 0,
         bw: data.blockedWhy || undefined,
@@ -76,13 +75,21 @@
         av: data.aviyaText  || undefined,
         pn: data.partnerName,
       };
+      // strip board-name prefix [BoardName] and leading emojis from task names for shorter URLs
+      const cleanTask = s => s.replace(/^[\u{1F000}-\u{1FFFF}🆕\s]*/u,'').replace(/^\[[^\]]*\]\s*/,'').slice(0,60).trim();
+      ['d','ip','bl','t'].forEach(k => { if(Array.isArray(c[k])) c[k]=c[k].map(cleanTask).filter(Boolean); });
       Object.keys(c).forEach(k => c[k] === undefined && delete c[k]);
-      return btoa(unescape(encodeURIComponent(JSON.stringify(c))));
+      // URL-safe base64: replace + → - , / → _ , strip = padding
+      const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(c))));
+      return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
     } catch { return null; }
   }
   function decodeReport(str) {
     try {
-      const d = JSON.parse(decodeURIComponent(escape(atob(str))));
+      // restore URL-safe base64 back to standard base64 before decoding
+      const standard = str.replace(/-/g,'+').replace(/_/g,'/');
+      const padded = standard + '==='.slice(0,(4-standard.length%4)%4);
+      const d = JSON.parse(decodeURIComponent(escape(atob(padded))));
       // expand compact format
       if ('ws' in d) {
         return {
