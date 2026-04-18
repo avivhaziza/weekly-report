@@ -450,26 +450,60 @@
 
     async function importFromTrello() {
       const cfg = LS.getTrello();
-      if (!cfg.key || !cfg.token || !cfg.doneListId) {
-        setImportErr('הגדר API Key, Token ורשימת Done בהגדרות קודם');
+      if (!cfg.key || !cfg.token) {
+        setImportErr('הגדר API Key ו-Token בהגדרות קודם');
         setTimeout(()=>setImportErr(''),4000); return;
       }
       setImporting(true); setImportErr('');
       try {
-        const fetchList = async (listId) => {
-          if (!listId) return [];
-          const res = await fetch(`https://api.trello.com/1/lists/${listId}/cards?key=${cfg.key}&token=${cfg.token}&fields=name`);
-          if (!res.ok) throw new Error('שגיאת Trello');
-          return (await res.json()).map(c => c.name);
-        };
-        const [done, inProgress, blocked] = await Promise.all([
-          fetchList(cfg.doneListId),
-          fetchList(cfg.inProgressListId),
-          fetchList(cfg.blockedListId),
-        ]);
-        setF(p => ({ ...p, doneTasks: done, inProgressTasks: inProgress, blockedTasks: blocked }));
-        if (!done.length && !inProgress.length && !blocked.length) {
-          setImportErr('הרשימות ריקות'); setTimeout(()=>setImportErr(''),4000);
+        const q = `key=${cfg.key}&token=${cfg.token}`;
+
+        // helpers
+        const isDone    = n => /done|הושלם|finished|complet|ארכיון|archive|closed|סגור/i.test(n);
+        const isBlocked = n => /block|תקוע|עצור|stuck|hold/i.test(n);
+        const cardAge   = id => new Date(parseInt(id.substring(0,8),16)*1000); // creation date from Trello card ID
+
+        // week boundaries
+        const ws = new Date(f.weekStart);
+        const we = new Date(f.weekEnd); we.setHours(23,59,59);
+        const activeThisWeek = d => { const t=new Date(d); return t>=ws && t<=we; };
+        const newThisWeek    = id => { const t=cardAge(id); return t>=ws && t<=we; };
+
+        // 1. all open boards
+        const boardsRes = await fetch(`https://api.trello.com/1/members/me/boards?filter=open&fields=name,id&${q}`);
+        if (!boardsRes.ok) throw new Error('פרטים שגויים — בדוק Key ו-Token בהגדרות');
+        const boards = await boardsRes.json();
+
+        // 2. for each board, fetch lists + cards in parallel
+        const boardData = await Promise.all(boards.map(async board => {
+          const [lr, cr] = await Promise.all([
+            fetch(`https://api.trello.com/1/boards/${board.id}/lists?filter=open&fields=name,id&${q}`),
+            fetch(`https://api.trello.com/1/boards/${board.id}/cards?filter=open&fields=name,dateLastActivity,idList,id&${q}`),
+          ]);
+          return { boardName: board.name, lists: await lr.json(), cards: await cr.json() };
+        }));
+
+        // 3. categorize
+        const done = [], active = [], blocked = [];
+        for (const { boardName, lists, cards } of boardData) {
+          const listName = Object.fromEntries(lists.map(l=>[l.id, l.name]));
+          const prefix   = boards.length > 1 ? `[${boardName}] ` : '';
+          for (const card of cards) {
+            const ln  = listName[card.idList] || '';
+            const label = (newThisWeek(card.id) ? '🆕 ' : '') + prefix + card.name;
+            if (isDone(ln)) {
+              if (activeThisWeek(card.dateLastActivity)) done.push(label);
+            } else if (isBlocked(ln)) {
+              blocked.push(label);
+            } else {
+              if (activeThisWeek(card.dateLastActivity)) active.push(label);
+            }
+          }
+        }
+
+        setF(p => ({ ...p, doneTasks: done, inProgressTasks: active, blockedTasks: blocked }));
+        if (!done.length && !active.length && !blocked.length) {
+          setImportErr('אין פעילות השבוע בטרלו'); setTimeout(()=>setImportErr(''),4000);
         }
       } catch(e) { setImportErr(e.message||'שגיאה לא ידועה'); setTimeout(()=>setImportErr(''),4000); }
       setImporting(false);
@@ -477,7 +511,7 @@
 
     useEffect(() => {
       const cfg = LS.getTrello();
-      if (cfg.key && cfg.token && cfg.doneListId) importFromTrello();
+      if (cfg.key && cfg.token) importFromTrello();
     }, []);
 
     function buildReportData() {
@@ -597,7 +631,7 @@
               </div>
             ) : (
               <div className="text-center py-6 text-slate-400 dark:text-slate-500 bg-white dark:bg-slate-700/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-600">
-                {LS.getTrello().doneListId
+                {LS.getTrello().key
                   ? <p className="text-sm">לחץ "רענן מ-Trello" לטעינת המשימות</p>
                   : <p className="text-sm">הגדר Trello בהגדרות לטעינה אוטומטית</p>
                 }
@@ -902,42 +936,25 @@
 
     // Trello state
     const trelloCfg = LS.getTrello();
-    const [trKey,   setTrKey]    = useState(trelloCfg.key    || '');
-    const [trToken, setTrToken]  = useState(trelloCfg.token  || '');
-    const [boards,  setBoards]   = useState([]);
-    const [lists,   setLists]    = useState([]);
-    const [trBoard,          setTrBoard]          = useState(trelloCfg.boardId          || '');
-    const [trDoneList,       setTrDoneList]       = useState(trelloCfg.doneListId       || '');
-    const [trInProgressList, setTrInProgressList] = useState(trelloCfg.inProgressListId || '');
-    const [trBlockedList,    setTrBlockedList]    = useState(trelloCfg.blockedListId    || '');
-    const [trLoading, setTrLoading] = useState('');
-    const [trErr,   setTrErr]    = useState('');
-    const [trSaved, setTrSaved]  = useState(false);
+    const [trKey,     setTrKey]     = useState(trelloCfg.key   || '');
+    const [trToken,   setTrToken]   = useState(trelloCfg.token || '');
+    const [trLoading, setTrLoading] = useState(false);
+    const [trErr,     setTrErr]     = useState('');
+    const [trSaved,   setTrSaved]   = useState(false);
+    const [trBoards,  setTrBoards]  = useState(0); // board count after verify
 
-    async function loadBoards() {
-      if (!trKey || !trToken) { setTrErr('הכנס Key ו-Token קודם'); return; }
-      setTrLoading('boards'); setTrErr('');
+    async function saveTrello() {
+      if (!trKey || !trToken) { setTrErr('הכנס Key ו-Token'); return; }
+      setTrLoading(true); setTrErr('');
       try {
-        const r = await fetch(`https://api.trello.com/1/members/me/boards?key=${trKey}&token=${trToken}&fields=name,id`);
-        if (!r.ok) throw new Error('פרטים שגויים');
-        setBoards(await r.json());
+        const r = await fetch(`https://api.trello.com/1/members/me/boards?key=${trKey}&token=${trToken}&filter=open&fields=id`);
+        if (!r.ok) throw new Error('פרטים שגויים — בדוק Key ו-Token');
+        const boards = await r.json();
+        LS.setTrello({ key:trKey, token:trToken });
+        setTrBoards(boards.length);
+        setTrSaved(true); setTimeout(()=>setTrSaved(false), 3000);
       } catch(e) { setTrErr(e.message); }
-      setTrLoading('');
-    }
-
-    async function loadLists(boardId) {
-      setTrBoard(boardId); setTrLoading('lists'); setTrErr('');
-      try {
-        const r = await fetch(`https://api.trello.com/1/boards/${boardId}/lists?key=${trKey}&token=${trToken}&fields=name,id`);
-        if (!r.ok) throw new Error('שגיאת Trello');
-        setLists(await r.json());
-      } catch(e) { setTrErr(e.message); }
-      setTrLoading('');
-    }
-
-    function saveTrello() {
-      LS.setTrello({ key:trKey, token:trToken, boardId:trBoard, doneListId:trDoneList, inProgressListId:trInProgressList, blockedListId:trBlockedList });
-      setTrSaved(true); setTimeout(()=>setTrSaved(false), 2000);
+      setTrLoading(false);
     }
 
     function saveName() { LS.setPartner(nameVal); setPartnerName(nameVal); setSavedName(true); setTimeout(()=>setSavedName(false),2000); }
@@ -981,7 +998,7 @@
             <div className="p-6 space-y-4">
               <div>
                 <p className="font-bold text-on-surface dark:text-slate-100 text-sm mb-0.5">חיבור Trello</p>
-                <p className="text-xs text-slate-400 dark:text-slate-500">לאחר הגדרה, תוכל לייבא משימות ישירות לדוח בלחיצה אחת.</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500">המערכת תטען אוטומטית משימות מ<strong>כל הלוחות</strong> שלך ותסווג אותן לפי סטטוס ותאריך פעילות.</p>
               </div>
 
               <div className="space-y-3">
@@ -993,60 +1010,19 @@
                   <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Token</p>
                   <UInput placeholder="הדבק Token" value={trToken} onChange={setTrToken}/>
                 </div>
-                <button onClick={loadBoards} disabled={trLoading==='boards'}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold hover:bg-blue-800 transition-colors disabled:opacity-50">
-                  <span className="material-symbols-outlined text-base">{trLoading==='boards'?'sync':'cloud_download'}</span>
-                  {trLoading==='boards'?'טוען...':'טען לוחות'}
-                </button>
               </div>
 
-              {boards.length > 0 && (
-                <div className="space-y-3 fade-in">
-                  <div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">לוח</p>
-                    <select value={trBoard} onChange={e=>loadLists(e.target.value)}
-                      className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2 text-sm text-on-surface dark:text-slate-100">
-                      <option value="">בחר לוח...</option>
-                      {boards.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
-                    </select>
-                  </div>
-                  {lists.length > 0 && (
-                    <div className="space-y-3 fade-in">
-                      <div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">✅ רשימת "הושלם" (Done) *</p>
-                        <select value={trDoneList} onChange={e=>setTrDoneList(e.target.value)}
-                          className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2 text-sm text-on-surface dark:text-slate-100">
-                          <option value="">בחר רשימה...</option>
-                          {lists.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">🔄 רשימת "בתהליך" (In Progress)</p>
-                        <select value={trInProgressList} onChange={e=>setTrInProgressList(e.target.value)}
-                          className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2 text-sm text-on-surface dark:text-slate-100">
-                          <option value="">בחר רשימה (אופציונלי)...</option>
-                          {lists.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">🚧 רשימת "תקוע" (Blocked)</p>
-                        <select value={trBlockedList} onChange={e=>setTrBlockedList(e.target.value)}
-                          className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2 text-sm text-on-surface dark:text-slate-100">
-                          <option value="">בחר רשימה (אופציונלי)...</option>
-                          {lists.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  )}
+              {trErr && <p className="text-xs text-error dark:text-red-400 fade-in">{trErr}</p>}
+              {trSaved && trBoards > 0 && (
+                <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-lg px-4 py-2.5 text-sm text-emerald-700 dark:text-emerald-400 font-semibold fade-in">
+                  ✓ מחובר — נמצאו {trBoards} לוחות
                 </div>
               )}
 
-              {trErr && <p className="text-xs text-error dark:text-red-400 fade-in">{trErr}</p>}
-
-              {trDoneList && (
-                <button onClick={saveTrello}
-                  className={`w-full py-2.5 rounded-xl text-sm font-bold transition-colors ${trSaved?'bg-emerald-500 text-white':'bg-primary text-white hover:bg-blue-800'}`}>
-                  {trSaved ? '✓ נשמר' : 'שמור חיבור Trello'}
+              {(trKey || trToken) && (
+                <button onClick={saveTrello} disabled={trLoading}
+                  className={`w-full py-2.5 rounded-xl text-sm font-bold transition-colors disabled:opacity-50 ${trSaved?'bg-emerald-500 text-white':'bg-primary text-white hover:bg-blue-800'}`}>
+                  {trLoading ? 'מאמת חיבור...' : trSaved ? '✓ נשמר' : 'שמור וחבר Trello'}
                 </button>
               )}
 
