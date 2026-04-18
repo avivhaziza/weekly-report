@@ -63,7 +63,10 @@
         s:  data.status,
         sw: data.statusWhy  || undefined,
         a:  data.areas,
-        t:  [data.task1, data.task2, data.task3].filter(Boolean),
+        d:  (data.doneTasks        || []).filter(Boolean),
+        ip: (data.inProgressTasks  || []).filter(Boolean),
+        bl: (data.blockedTasks     || []).filter(Boolean),
+        t:  (data.doneTasks || data.tasks || []).filter(Boolean), // backward compat
         tr: data.trello     || undefined,
         b:  data.blocked === 'yes' ? 1 : 0,
         bw: data.blockedWhy || undefined,
@@ -83,20 +86,23 @@
       // expand compact format
       if ('ws' in d) {
         return {
-          weekStart:   d.ws,
-          weekEnd:     d.we,
-          status:      d.s,
-          statusWhy:   d.sw || '',
-          areas:       d.a  || [],
-          tasks:       d.t  || [],
-          trello:      d.tr || '',
-          blocked:     d.b  ? 'yes' : 'no',
-          blockedWhy:  d.bw || '',
-          focus:       d.f  || [],
-          focusMain:   d.fm || '',
-          needAviya:   d.n  ? 'yes' : 'no',
-          aviyaText:   d.av || '',
-          partnerName: d.pn || '',
+          weekStart:        d.ws,
+          weekEnd:          d.we,
+          status:           d.s,
+          statusWhy:        d.sw || '',
+          areas:            d.a  || [],
+          doneTasks:        d.d  || d.t || [],
+          inProgressTasks:  d.ip || [],
+          blockedTasks:     d.bl || [],
+          tasks:            d.t  || d.d || [], // backward compat
+          trello:           d.tr || '',
+          blocked:          d.b  ? 'yes' : 'no',
+          blockedWhy:       d.bw || '',
+          focus:            d.f  || [],
+          focusMain:        d.fm || '',
+          needAviya:        d.n  ? 'yes' : 'no',
+          aviyaText:        d.av || '',
+          partnerName:      d.pn || '',
         };
       }
       // legacy format (old URLs still work)
@@ -124,7 +130,7 @@
     deleteReport: id => { const a = LS.getReports().filter(r=>r.id!==id); localStorage.setItem('wr-reports', JSON.stringify(a)); },
     getProjects:  () => JSON.parse(localStorage.getItem('wr-projects') || '[]'),
     saveProjects: v  => localStorage.setItem('wr-projects', JSON.stringify(v)),
-    getTrello:    () => JSON.parse(localStorage.getItem('wr-trello') || '{}'),
+    getTrello:    () => { const c=JSON.parse(localStorage.getItem('wr-trello')||'{}'); if(c.listId&&!c.doneListId)c.doneListId=c.listId; return c; },
     setTrello:    v  => localStorage.setItem('wr-trello', JSON.stringify(v)),
     clearAll:     () => { localStorage.removeItem('wr-reports'); localStorage.removeItem('wr-projects'); },
   };
@@ -279,7 +285,9 @@
     const statusObj = STATUS_OPTS.find(o=>o.v===report.status);
     const areas     = AREA_OPTS.filter(o=>report.areas?.includes(o.v));
     const focusList = FOCUS_OPTS.filter(o=>report.focus?.includes(o.v));
-    const tasks     = report.tasks || [report.task1,report.task2,report.task3].filter(Boolean);
+    const doneTasks       = report.doneTasks       || report.tasks || [report.task1,report.task2,report.task3].filter(Boolean);
+    const inProgressTasks = report.inProgressTasks || [];
+    const blockedTasks    = report.blockedTasks    || [];
     const [copied, setCopied] = useState(false);
 
     const statusColor = {
@@ -349,18 +357,30 @@
           </Block>
         </div>
 
-        {/* ── tasks ── */}
-        <Block label="משימות שבוצעו השבוע">
-          {tasks.length ? (
-            <ul className="space-y-2">
-              {tasks.map((t,i)=>(
-                <li key={i} className="flex items-start gap-3">
-                  <span className="w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">{i+1}</span>
-                  <span className="text-sm text-on-surface dark:text-slate-200 leading-relaxed">{t}</span>
-                </li>
-              ))}
-            </ul>
-          ) : <span className="text-slate-400 text-sm">לא צוינו משימות</span>}
+        {/* ── board snapshot ── */}
+        <Block label="סטטוס לוח משימות">
+          {(doneTasks.length || inProgressTasks.length || blockedTasks.length) ? (
+            <div className="space-y-3">
+              {doneTasks.length > 0 && (
+                <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-lg p-3 border border-emerald-100 dark:border-emerald-800">
+                  <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-2">✅ הושלם ({doneTasks.length})</p>
+                  <ul className="space-y-1">{doneTasks.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
+                </div>
+              )}
+              {inProgressTasks.length > 0 && (
+                <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3 border border-blue-100 dark:border-blue-800">
+                  <p className="text-xs font-bold text-blue-700 dark:text-blue-400 mb-2">🔄 בתהליך ({inProgressTasks.length})</p>
+                  <ul className="space-y-1">{inProgressTasks.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
+                </div>
+              )}
+              {blockedTasks.length > 0 && (
+                <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-3 border border-red-100 dark:border-red-800">
+                  <p className="text-xs font-bold text-red-700 dark:text-red-400 mb-2">🚧 תקוע ({blockedTasks.length})</p>
+                  <ul className="space-y-1">{blockedTasks.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
+                </div>
+              )}
+            </div>
+          ) : <span className="text-slate-400 text-sm">לא נטענו משימות</span>}
           {report.trello && (
             <a href={report.trello} target="_blank" rel="noopener"
               className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 text-sm text-primary dark:text-blue-400 hover:underline">
@@ -415,7 +435,7 @@
       weekStart:start, weekEnd:end,
       status:'', statusWhy:'',
       areas:[],
-      tasks:[''],
+      doneTasks:[], inProgressTasks:[], blockedTasks:[],
       trello:'',
       blocked:'', blockedWhy:'',
       focus:[], focusMain:'',
@@ -428,42 +448,45 @@
     const [importing, setImporting] = useState(false);
     const [importErr, setImportErr] = useState('');
 
-    // task list helpers
-    function setTask(i, v) { setF(p=>{ const t=[...p.tasks]; t[i]=v; return {...p,tasks:t}; }); }
-    function addTask()     { setF(p=>({...p,tasks:[...p.tasks,'']})); }
-    function removeTask(i) { setF(p=>({...p,tasks:p.tasks.filter((_,idx)=>idx!==i)})); }
-
     async function importFromTrello() {
       const cfg = LS.getTrello();
-      if (!cfg.key || !cfg.token || !cfg.listId) {
-        setImportErr('הגדר API Key, Token ורשימה בהגדרות קודם');
+      if (!cfg.key || !cfg.token || !cfg.doneListId) {
+        setImportErr('הגדר API Key, Token ורשימת Done בהגדרות קודם');
         setTimeout(()=>setImportErr(''),4000); return;
       }
       setImporting(true); setImportErr('');
       try {
-        const res = await fetch(
-          `https://api.trello.com/1/lists/${cfg.listId}/cards?key=${cfg.key}&token=${cfg.token}&fields=name,dateLastActivity`
-        );
-        if (!res.ok) throw new Error('שגיאת Trello');
-        const cards = await res.json();
-        // filter cards active this week
-        const weekStart = new Date(f.weekStart);
-        const weekEnd   = new Date(f.weekEnd); weekEnd.setHours(23,59,59);
-        const thisWeek  = cards.filter(c => {
-          const d = new Date(c.dateLastActivity);
-          return d >= weekStart && d <= weekEnd;
-        });
-        const names = thisWeek.map(c=>c.name);
-        if (!names.length) { setImportErr('לא נמצאו כרטיסים שהושלמו השבוע'); setTimeout(()=>setImportErr(''),4000); }
-        else setF(p=>({ ...p, tasks: [...names, ''] }));
+        const fetchList = async (listId) => {
+          if (!listId) return [];
+          const res = await fetch(`https://api.trello.com/1/lists/${listId}/cards?key=${cfg.key}&token=${cfg.token}&fields=name`);
+          if (!res.ok) throw new Error('שגיאת Trello');
+          return (await res.json()).map(c => c.name);
+        };
+        const [done, inProgress, blocked] = await Promise.all([
+          fetchList(cfg.doneListId),
+          fetchList(cfg.inProgressListId),
+          fetchList(cfg.blockedListId),
+        ]);
+        setF(p => ({ ...p, doneTasks: done, inProgressTasks: inProgress, blockedTasks: blocked }));
+        if (!done.length && !inProgress.length && !blocked.length) {
+          setImportErr('הרשימות ריקות'); setTimeout(()=>setImportErr(''),4000);
+        }
       } catch(e) { setImportErr(e.message||'שגיאה לא ידועה'); setTimeout(()=>setImportErr(''),4000); }
       setImporting(false);
     }
 
+    useEffect(() => {
+      const cfg = LS.getTrello();
+      if (cfg.key && cfg.token && cfg.doneListId) importFromTrello();
+    }, []);
+
     function buildReportData() {
       return {
         ...f,
-        tasks: f.tasks.filter(Boolean),
+        doneTasks:       f.doneTasks,
+        inProgressTasks: f.inProgressTasks,
+        blockedTasks:    f.blockedTasks,
+        tasks:           f.doneTasks, // backward compat
         partnerName,
         sentAt: new Date().toISOString(),
       };
@@ -539,44 +562,49 @@
           <AreaCheckboxes values={f.areas} onChange={set('areas')}/>
         </SectionCard>
 
-        {/* 04 tasks */}
-        <SectionCard n="04" title="משימות שבוצעו">
+        {/* 04 board snapshot */}
+        <SectionCard n="04" title="סטטוס לוח המשימות">
           <div className="space-y-4">
-            {/* Trello import row */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <button onClick={importFromTrello} disabled={importing}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-primary dark:border-blue-400 text-primary dark:text-blue-400 text-sm font-bold hover:bg-primary-fixed dark:hover:bg-blue-900/30 transition-all disabled:opacity-50">
-                <span className="material-symbols-outlined text-base">{importing?'sync':'download'}</span>
-                {importing ? 'מייבא...' : 'ייבא מ-Trello'}
+                <span className={`material-symbols-outlined text-base${importing?' animate-spin':''}`}>refresh</span>
+                {importing ? 'מרענן מטרלו...' : 'רענן מ-Trello'}
               </button>
               {importErr && <span className="text-xs text-error dark:text-red-400 fade-in">{importErr}</span>}
-              {!importErr && <span className="text-xs text-slate-400 dark:text-slate-500">מושך כרטיסים שהושלמו השבוע הזה</span>}
             </div>
 
-            {/* dynamic task list */}
-            <div className="space-y-2">
-              {f.tasks.map((t,i)=>(
-                <div key={i} className="flex items-center gap-3">
-                  <span className="text-slate-300 dark:text-slate-600 font-mono text-sm shrink-0 w-5 text-left">{i+1}</span>
-                  <div className="flex-1">
-                    <UInput placeholder={i===0?'משימה ראשונה...':'משימה נוספת...'} value={t} onChange={v=>setTask(i,v)} maxLength={200}/>
+            {(f.doneTasks.length > 0 || f.inProgressTasks.length > 0 || f.blockedTasks.length > 0) ? (
+              <div className="space-y-3 fade-in">
+                {f.doneTasks.length > 0 && (
+                  <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-4 border border-emerald-100 dark:border-emerald-800">
+                    <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-widest mb-2">✅ הושלם ({f.doneTasks.length})</p>
+                    <ul className="space-y-1">{f.doneTasks.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
                   </div>
-                  {f.tasks.length > 1 && (
-                    <button onClick={()=>removeTask(i)} className="text-slate-300 dark:text-slate-600 hover:text-error transition-colors shrink-0">
-                      <span className="material-symbols-outlined text-base">close</span>
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
+                )}
+                {f.inProgressTasks.length > 0 && (
+                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 border border-blue-100 dark:border-blue-800">
+                    <p className="text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-widest mb-2">🔄 בתהליך ({f.inProgressTasks.length})</p>
+                    <ul className="space-y-1">{f.inProgressTasks.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
+                  </div>
+                )}
+                {f.blockedTasks.length > 0 && (
+                  <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-4 border border-red-100 dark:border-red-800">
+                    <p className="text-xs font-bold text-red-700 dark:text-red-400 uppercase tracking-widest mb-2">🚧 תקוע ({f.blockedTasks.length})</p>
+                    <ul className="space-y-1">{f.blockedTasks.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-6 text-slate-400 dark:text-slate-500 bg-white dark:bg-slate-700/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-600">
+                {LS.getTrello().doneListId
+                  ? <p className="text-sm">לחץ "רענן מ-Trello" לטעינת המשימות</p>
+                  : <p className="text-sm">הגדר Trello בהגדרות לטעינה אוטומטית</p>
+                }
+              </div>
+            )}
 
-            <button onClick={addTask}
-              className="flex items-center gap-2 text-sm text-slate-400 dark:text-slate-500 hover:text-primary dark:hover:text-blue-400 transition-colors">
-              <span className="material-symbols-outlined text-base">add</span>
-              הוסף משימה
-            </button>
-
-            <div className="bg-blue-50/50 dark:bg-blue-900/20 p-3 rounded-lg flex items-center gap-3 border border-blue-100 dark:border-blue-800 mt-2">
+            <div className="bg-blue-50/50 dark:bg-blue-900/20 p-3 rounded-lg flex items-center gap-3 border border-blue-100 dark:border-blue-800">
               <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 shrink-0 text-xl">link</span>
               <input type="url" value={f.trello} onChange={e=>set('trello')(e.target.value)}
                 placeholder="קישור ללוח Trello (אופציונלי)"
@@ -666,7 +694,7 @@
     // graph data — last 8 weeks, tasks per week
     const graphData = [...reports].reverse().slice(-8).map(r=>({
       label: r.weekStart?.slice(5) ?? '',
-      count: r.tasks?.length ?? 0,
+      count: (r.doneTasks?.length ?? r.tasks?.length) ?? 0,
       status: r.status,
     }));
     const maxCount = Math.max(...graphData.map(d=>d.count), 1);
@@ -744,14 +772,33 @@
                         </p>
                       </div>
                     </div>
-                    {r.tasks?.length>0 && (
-                      <div className="bg-white dark:bg-slate-700 p-3 rounded-lg">
-                        <p className="text-xs text-slate-400 mb-2">משימות</p>
-                        <ul className="space-y-1">
-                          {r.tasks.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}
-                        </ul>
-                      </div>
-                    )}
+                    {(() => {
+                      const dt  = r.doneTasks?.length > 0 ? r.doneTasks : (r.tasks || []);
+                      const ipt = r.inProgressTasks || [];
+                      const bt  = r.blockedTasks    || [];
+                      return (dt.length > 0 || ipt.length > 0 || bt.length > 0) && (
+                        <div className="space-y-2">
+                          {dt.length > 0 && (
+                            <div className="bg-white dark:bg-slate-700 p-3 rounded-lg">
+                              <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mb-1">✅ הושלם ({dt.length})</p>
+                              <ul className="space-y-0.5">{dt.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
+                            </div>
+                          )}
+                          {ipt.length > 0 && (
+                            <div className="bg-white dark:bg-slate-700 p-3 rounded-lg">
+                              <p className="text-xs font-bold text-blue-600 dark:text-blue-400 mb-1">🔄 בתהליך ({ipt.length})</p>
+                              <ul className="space-y-0.5">{ipt.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
+                            </div>
+                          )}
+                          {bt.length > 0 && (
+                            <div className="bg-white dark:bg-slate-700 p-3 rounded-lg">
+                              <p className="text-xs font-bold text-red-600 dark:text-red-400 mb-1">🚧 תקוע ({bt.length})</p>
+                              <ul className="space-y-0.5">{bt.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
@@ -859,8 +906,10 @@
     const [trToken, setTrToken]  = useState(trelloCfg.token  || '');
     const [boards,  setBoards]   = useState([]);
     const [lists,   setLists]    = useState([]);
-    const [trBoard, setTrBoard]  = useState(trelloCfg.boardId || '');
-    const [trList,  setTrList]   = useState(trelloCfg.listId  || '');
+    const [trBoard,          setTrBoard]          = useState(trelloCfg.boardId          || '');
+    const [trDoneList,       setTrDoneList]       = useState(trelloCfg.doneListId       || '');
+    const [trInProgressList, setTrInProgressList] = useState(trelloCfg.inProgressListId || '');
+    const [trBlockedList,    setTrBlockedList]    = useState(trelloCfg.blockedListId    || '');
     const [trLoading, setTrLoading] = useState('');
     const [trErr,   setTrErr]    = useState('');
     const [trSaved, setTrSaved]  = useState(false);
@@ -887,7 +936,7 @@
     }
 
     function saveTrello() {
-      LS.setTrello({ key:trKey, token:trToken, boardId:trBoard, listId:trList });
+      LS.setTrello({ key:trKey, token:trToken, boardId:trBoard, doneListId:trDoneList, inProgressListId:trInProgressList, blockedListId:trBlockedList });
       setTrSaved(true); setTimeout(()=>setTrSaved(false), 2000);
     }
 
@@ -962,13 +1011,31 @@
                     </select>
                   </div>
                   {lists.length > 0 && (
-                    <div className="fade-in">
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">רשימת "הושלם" (Done)</p>
-                      <select value={trList} onChange={e=>setTrList(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2 text-sm text-on-surface dark:text-slate-100">
-                        <option value="">בחר רשימה...</option>
-                        {lists.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
-                      </select>
+                    <div className="space-y-3 fade-in">
+                      <div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">✅ רשימת "הושלם" (Done) *</p>
+                        <select value={trDoneList} onChange={e=>setTrDoneList(e.target.value)}
+                          className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2 text-sm text-on-surface dark:text-slate-100">
+                          <option value="">בחר רשימה...</option>
+                          {lists.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">🔄 רשימת "בתהליך" (In Progress)</p>
+                        <select value={trInProgressList} onChange={e=>setTrInProgressList(e.target.value)}
+                          className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2 text-sm text-on-surface dark:text-slate-100">
+                          <option value="">בחר רשימה (אופציונלי)...</option>
+                          {lists.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">🚧 רשימת "תקוע" (Blocked)</p>
+                        <select value={trBlockedList} onChange={e=>setTrBlockedList(e.target.value)}
+                          className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2 text-sm text-on-surface dark:text-slate-100">
+                          <option value="">בחר רשימה (אופציונלי)...</option>
+                          {lists.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+                        </select>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -976,7 +1043,7 @@
 
               {trErr && <p className="text-xs text-error dark:text-red-400 fade-in">{trErr}</p>}
 
-              {trList && (
+              {trDoneList && (
                 <button onClick={saveTrello}
                   className={`w-full py-2.5 rounded-xl text-sm font-bold transition-colors ${trSaved?'bg-emerald-500 text-white':'bg-primary text-white hover:bg-blue-800'}`}>
                   {trSaved ? '✓ נשמר' : 'שמור חיבור Trello'}
