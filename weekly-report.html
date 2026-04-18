@@ -56,16 +56,22 @@
   /* ─── encode / decode report in URL ─── */
   function encodeReport(data) {
     try {
+      const clean = s => s.replace(/^🆕\s*/,'').slice(0,55).trim();
       const c = {
         ws: data.weekStart,
         we: data.weekEnd,
         s:  data.status,
         sw: data.statusWhy  || undefined,
         a:  data.areas,
-        d:  (data.doneTasks        || []).filter(Boolean),
-        ip: (data.inProgressTasks  || []).filter(Boolean),
-        bl: (data.blockedTasks     || []).filter(Boolean),
-        t:  (data.doneTasks || data.tasks || []).filter(Boolean),
+        // board snapshot: [{ b: boardName, l: [{ n: listName, c: [cards], d: 1ifDone }] }]
+        bs: data.boardSnapshot?.length ? data.boardSnapshot.map(board=>({
+              b: board.boardName,
+              l: board.lists.filter(l=>l.cards.length).map(l=>({
+                n: l.listName,
+                c: l.cards.slice(0,6).map(clean),
+                ...(l.isDone ? {d:1} : {}),
+              }))
+            })).filter(b=>b.l.length) : undefined,
         tr: data.trello     || undefined,
         b:  data.blocked === 'yes' ? 1 : 0,
         bw: data.blockedWhy || undefined,
@@ -75,9 +81,6 @@
         av: data.aviyaText  || undefined,
         pn: data.partnerName,
       };
-      // strip board-name prefix [BoardName] and leading emojis from task names for shorter URLs
-      const cleanTask = s => s.replace(/^[\u{1F000}-\u{1FFFF}🆕\s]*/u,'').replace(/^\[[^\]]*\]\s*/,'').slice(0,60).trim();
-      ['d','ip','bl','t'].forEach(k => { if(Array.isArray(c[k])) c[k]=c[k].map(cleanTask).filter(Boolean); });
       Object.keys(c).forEach(k => c[k] === undefined && delete c[k]);
       // URL-safe base64: replace + → - , / → _ , strip = padding
       const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(c))));
@@ -92,13 +95,19 @@
       const d = JSON.parse(decodeURIComponent(escape(atob(padded))));
       // expand compact format
       if ('ws' in d) {
+        // expand bs → boardSnapshot: [{ boardName, lists:[{ listName, cards:[], isDone }] }]
+        const boardSnapshot = d.bs ? d.bs.map(b=>({
+          boardName: b.b,
+          lists: (b.l||[]).map(l=>({ listName: l.n, cards: l.c||[], isDone: !!l.d })),
+        })) : [];
         return {
           weekStart:        d.ws,
           weekEnd:          d.we,
           status:           d.s,
           statusWhy:        d.sw || '',
           areas:            d.a  || [],
-          doneTasks:        d.d  || d.t || [],
+          boardSnapshot,
+          doneTasks:        d.d  || d.t || [], // backward compat
           inProgressTasks:  d.ip || [],
           blockedTasks:     d.bl || [],
           tasks:            d.t  || d.d || [], // backward compat
@@ -302,6 +311,7 @@
     const statusObj = STATUS_OPTS.find(o=>o.v===report.status);
     const areas     = AREA_OPTS.filter(o=>report.areas?.includes(o.v));
     const focusList = FOCUS_OPTS.filter(o=>report.focus?.includes(o.v));
+    const boardSnapshot   = report.boardSnapshot   || [];
     const doneTasks       = report.doneTasks       || report.tasks || [report.task1,report.task2,report.task3].filter(Boolean);
     const inProgressTasks = report.inProgressTasks || [];
     const blockedTasks    = report.blockedTasks    || [];
@@ -376,8 +386,33 @@
 
         {/* ── board snapshot ── */}
         <Block label="סטטוס לוח משימות">
-          {(doneTasks.length || inProgressTasks.length || blockedTasks.length) ? (
-            <div className="space-y-3">
+          {boardSnapshot.length > 0 ? (
+            <div className="space-y-4">
+              {boardSnapshot.map((board, bi) => (
+                <div key={bi}>
+                  {boardSnapshot.length > 1 && (
+                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2">📋 {board.boardName}</p>
+                  )}
+                  <div className="space-y-2">
+                    {board.lists.map((list, li) => (
+                      <div key={li} className={`rounded-lg p-3 border ${list.isDone
+                        ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-800'
+                        : 'bg-slate-50 dark:bg-slate-700/50 border-slate-100 dark:border-slate-600'}`}>
+                        <p className={`text-xs font-bold mb-2 ${list.isDone
+                          ? 'text-emerald-700 dark:text-emerald-400'
+                          : 'text-slate-600 dark:text-slate-400'}`}>
+                          {list.isDone ? '✅ ' : '▸ '}{list.listName} ({list.cards.length})
+                        </p>
+                        <ul className="space-y-1">{list.cards.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (doneTasks.length || inProgressTasks.length || blockedTasks.length) ? (
+            // legacy fallback for old reports
+            <div className="space-y-2">
               {doneTasks.length > 0 && (
                 <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-lg p-3 border border-emerald-100 dark:border-emerald-800">
                   <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-2">✅ הושלם ({doneTasks.length})</p>
@@ -459,6 +494,7 @@
       weekStart:start, weekEnd:end,
       status:'', statusWhy:'',
       areas:[],
+      boardSnapshot:[],
       doneTasks:[], inProgressTasks:[], blockedTasks:[],
       trello:'',
       blocked:'', blockedWhy:'',
@@ -482,16 +518,10 @@
       try {
         const q = `key=${cfg.key}&token=${cfg.token}`;
 
-        const isDone    = n => /done|הושלם|finished|complet|ארכיון|archive|closed|סגור|בוצע|נגמר|הסתיים|טופל|סיום/i.test(n);
-        const isBlocked = n => /block|תקוע|עצור|stuck|hold/i.test(n);
-        const isBacklog = n => /backlog|רעיונות|ideas|queue|תור|לביצוע|to.?do/i.test(n);
-        const cardAge   = id => new Date(parseInt(id.substring(0,8),16)*1000);
-
-        const ws  = new Date(f.weekStart);
-        const we  = new Date(f.weekEnd); we.setHours(23,59,59);
+        const ws     = new Date(f.weekStart);
+        const we     = new Date(f.weekEnd); we.setHours(23,59,59);
         const weNext = new Date(f.weekEnd); weNext.setDate(weNext.getDate()+1);
-        const activeThisWeek = d => { const t=new Date(d); return t>=ws && t<=we; };
-        const newThisWeek    = id => { const t=cardAge(id); return t>=ws && t<=we; };
+        const thisWeek = d => { const t=new Date(d); return t>=ws && t<=we; };
 
         // 1. all open boards
         const boardsRes = await fetch(`https://api.trello.com/1/members/me/boards?filter=open&fields=name,id&${q}`);
@@ -501,7 +531,7 @@
         // 2. per board: lists + actions (card movements this week) + open cards
         const boardData = await Promise.all(boards.map(async board => {
           try {
-            const since = f.weekStart;
+            const since  = f.weekStart;
             const before = weNext.toISOString().slice(0,10);
             const [lr, actR, cardsR] = await Promise.all([
               fetch(`https://api.trello.com/1/boards/${board.id}/lists?filter=open&fields=name,id&${q}`),
@@ -509,6 +539,7 @@
               fetch(`https://api.trello.com/1/boards/${board.id}/cards?filter=open&fields=name,dateLastActivity,idList,id&${q}`),
             ]);
             return {
+              boardId:   board.id,
               boardName: board.name,
               lists:   lr.ok    ? await lr.json()    : [],
               actions: actR.ok  ? await actR.json()  : [],
@@ -517,40 +548,70 @@
           } catch { return null; }
         }));
 
-        // 3. categorize
-        const done = [], active = [], blocked = [];
+        // 3. build boardSnapshot: actual board/list structure with this week's activity
+        //    "moved this week" cards appear under a special synthetic "__moved__" list per destination.
+        //    All other active open cards appear under their real list name.
+        const snapshot = [];
         for (const data of boardData) {
           if (!data) continue;
           const { boardName, lists, actions, cards } = data;
-          const listMap = Object.fromEntries(lists.map(l=>[l.id, l.name]));
-          const prefix  = boards.length > 1 ? `[${boardName}] ` : '';
+          const listMap = Object.fromEntries(lists.map(l=>[l.id, { name:l.name, pos:lists.indexOf(l) }]));
           const seen    = new Set();
 
-          // A. הושלם: cards that MOVED into a done-like list this week (Actions API — exact)
+          // Accumulate cards per destination list name for moved-this-week cards
+          const movedByList = {};  // listName → [cardName, ...]
           for (const action of actions) {
             const { card, listAfter } = action.data || {};
             if (!card || !listAfter || seen.has(card.id)) continue;
-            if (isDone(listAfter.name || '')) {
-              done.push(prefix + card.name);
-              seen.add(card.id);
+            seen.add(card.id);
+            const dest = listAfter.name || '?';
+            if (!movedByList[dest]) movedByList[dest] = [];
+            movedByList[dest].push(card.name);
+          }
+
+          // Accumulate active open cards by their current list (not in backlog)
+          const isBacklog = n => /backlog|רעיונות|ideas|queue|תור|to.?do/i.test(n);
+          const activeByList = {};  // listName → [cardName, ...]
+          for (const card of cards) {
+            if (seen.has(card.id)) continue;
+            if (!thisWeek(card.dateLastActivity)) continue;
+            const linfo = listMap[card.idList];
+            if (!linfo) continue;
+            if (isBacklog(linfo.name)) continue;
+            seen.add(card.id);
+            if (!activeByList[linfo.name]) activeByList[linfo.name] = [];
+            activeByList[linfo.name].push(card.name);
+          }
+
+          // Build list entries, preserving board order for open lists first, then moved lists
+          const boardLists = [];
+
+          // Open lists that had active cards this week (in board order)
+          for (const l of lists) {
+            if (activeByList[l.name]?.length) {
+              boardLists.push({ listName: l.name, cards: activeByList[l.name], isDone: false });
             }
           }
 
-          // B. בתהליך / תקוע: open cards touched this week, not already done
-          for (const card of cards) {
-            if (seen.has(card.id)) continue;
-            if (!activeThisWeek(card.dateLastActivity)) continue;
-            const ln = listMap[card.idList] || '';
-            if (isDone(ln) || isBacklog(ln)) continue;
-            const label = (newThisWeek(card.id) ? '🆕 ' : '') + prefix + card.name;
-            if (isBlocked(ln)) blocked.push(label);
-            else active.push(label);
-            seen.add(card.id);
+          // Moved-to lists (cards completed this week) — marked isDone
+          for (const [listName, cards] of Object.entries(movedByList)) {
+            if (cards.length) {
+              boardLists.push({ listName, cards, isDone: true });
+            }
+          }
+
+          if (boardLists.length) {
+            snapshot.push({ boardName, lists: boardLists });
           }
         }
 
-        setF(p => ({ ...p, doneTasks: done, inProgressTasks: active, blockedTasks: blocked }));
-        const total = done.length + active.length + blocked.length;
+        // backward compat: also populate flat arrays from snapshot
+        const done    = snapshot.flatMap(b=>b.lists.filter(l=>l.isDone).flatMap(l=>l.cards));
+        const active  = snapshot.flatMap(b=>b.lists.filter(l=>!l.isDone).flatMap(l=>l.cards));
+
+        setF(p => ({ ...p, boardSnapshot: snapshot, doneTasks: done, inProgressTasks: active, blockedTasks: [] }));
+
+        const total = snapshot.reduce((s,b)=>s+b.lists.reduce((s2,l)=>s2+l.cards.length,0),0);
         if (!total) { setImportErr('לא נמצאה פעילות השבוע בטרלו'); setTimeout(()=>setImportErr(''),4000); }
       } catch(e) { setImportErr(e.message||'שגיאה לא ידועה'); setTimeout(()=>setImportErr(''),4000); }
       setImporting(false);
@@ -564,6 +625,7 @@
     function buildReportData() {
       return {
         ...f,
+        boardSnapshot:   f.boardSnapshot,
         doneTasks:       f.doneTasks,
         inProgressTasks: f.inProgressTasks,
         blockedTasks:    f.blockedTasks,
@@ -651,26 +713,31 @@
               {importErr && <span className="text-xs text-error dark:text-red-400 fade-in">{importErr}</span>}
             </div>
 
-            {(f.doneTasks.length > 0 || f.inProgressTasks.length > 0 || f.blockedTasks.length > 0) ? (
-              <div className="space-y-3 fade-in">
-                {f.doneTasks.length > 0 && (
-                  <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-4 border border-emerald-100 dark:border-emerald-800">
-                    <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-widest mb-2">✅ הושלם ({f.doneTasks.length})</p>
-                    <ul className="space-y-1">{f.doneTasks.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
+            {f.boardSnapshot.length > 0 ? (
+              <div className="space-y-4 fade-in">
+                {f.boardSnapshot.map((board, bi) => (
+                  <div key={bi} className="border border-slate-200 dark:border-slate-600 rounded-xl overflow-hidden">
+                    {f.boardSnapshot.length > 1 && (
+                      <div className="px-4 py-2 bg-slate-50 dark:bg-slate-700/60 border-b border-slate-200 dark:border-slate-600">
+                        <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">📋 {board.boardName}</p>
+                      </div>
+                    )}
+                    <div className="p-3 space-y-2">
+                      {board.lists.map((list, li) => (
+                        <div key={li} className={`rounded-lg p-3 border ${list.isDone
+                          ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-800'
+                          : 'bg-slate-50 dark:bg-slate-700/50 border-slate-100 dark:border-slate-600'}`}>
+                          <p className={`text-xs font-bold uppercase tracking-widest mb-2 ${list.isDone
+                            ? 'text-emerald-700 dark:text-emerald-400'
+                            : 'text-slate-600 dark:text-slate-400'}`}>
+                            {list.isDone ? '✅ ' : '▸ '}{list.listName} ({list.cards.length})
+                          </p>
+                          <ul className="space-y-1">{list.cards.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                )}
-                {f.inProgressTasks.length > 0 && (
-                  <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 border border-blue-100 dark:border-blue-800">
-                    <p className="text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-widest mb-2">🔄 בתהליך ({f.inProgressTasks.length})</p>
-                    <ul className="space-y-1">{f.inProgressTasks.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
-                  </div>
-                )}
-                {f.blockedTasks.length > 0 && (
-                  <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-4 border border-red-100 dark:border-red-800">
-                    <p className="text-xs font-bold text-red-700 dark:text-red-400 uppercase tracking-widest mb-2">🚧 תקוע ({f.blockedTasks.length})</p>
-                    <ul className="space-y-1">{f.blockedTasks.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
-                  </div>
-                )}
+                ))}
               </div>
             ) : (
               <div className="text-center py-6 text-slate-400 dark:text-slate-500 bg-white dark:bg-slate-700/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-600">
@@ -850,9 +917,36 @@
                       </div>
                     </div>
                     {(() => {
+                      const bs  = r.boardSnapshot || [];
                       const dt  = r.doneTasks?.length > 0 ? r.doneTasks : (r.tasks || []);
                       const ipt = r.inProgressTasks || [];
                       const bt  = r.blockedTasks    || [];
+                      if (bs.length > 0) return (
+                        <div className="space-y-3">
+                          {bs.map((board, bi) => (
+                            <div key={bi}>
+                              {bs.length > 1 && (
+                                <p className="text-xs font-bold text-slate-400 mb-1">📋 {board.boardName}</p>
+                              )}
+                              <div className="space-y-1.5">
+                                {board.lists.map((list, li) => (
+                                  <div key={li} className={`p-2.5 rounded-lg border ${list.isDone
+                                    ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-800'
+                                    : 'bg-white dark:bg-slate-700 border-slate-100 dark:border-slate-600'}`}>
+                                    <p className={`text-xs font-bold mb-1 ${list.isDone
+                                      ? 'text-emerald-600 dark:text-emerald-400'
+                                      : 'text-slate-500 dark:text-slate-400'}`}>
+                                      {list.isDone ? '✅ ' : '▸ '}{list.listName} ({list.cards.length})
+                                    </p>
+                                    <ul className="space-y-0.5">{list.cards.map((t,i)=><li key={i} className="text-sm text-on-surface dark:text-slate-200">• {t}</li>)}</ul>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                      // legacy fallback
                       return (dt.length > 0 || ipt.length > 0 || bt.length > 0) && (
                         <div className="space-y-2">
                           {dt.length > 0 && (
