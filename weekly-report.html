@@ -981,32 +981,37 @@
         <h1 className="text-4xl font-extrabold tracking-tight text-on-surface dark:text-slate-100 mb-8 font-headline">הגדרות</h1>
         <div className="space-y-6">
 
-          {/* hosted url — shown only as info, not editable unless needed */}
-          <div className="bg-surface-container-low dark:bg-slate-800 rounded-xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-full h-1 bg-surface-tint"/>
+          {/* hosted url */}
+          <div className={`rounded-xl relative overflow-hidden ${urlVal ? 'bg-surface-container-low dark:bg-slate-800' : 'bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-800'}`}>
+            <div className={`absolute top-0 right-0 w-full h-1 ${urlVal ? 'bg-surface-tint' : 'bg-amber-400'}`}/>
             <div className="p-6 space-y-3">
-              <div className="flex items-start gap-3">
-                <span className="material-symbols-outlined text-emerald-500 shrink-0 mt-0.5">link</span>
-                <div className="flex-1 min-w-0">
-                  <p className="font-bold text-on-surface dark:text-slate-100 text-sm mb-0.5">כתובת שיתוף</p>
+              <div>
+                <p className="font-bold text-on-surface dark:text-slate-100 text-sm mb-0.5">
+                  כתובת אביה לצפייה בדוח
+                  {urlVal && <span className="text-emerald-500 mr-2">✓</span>}
+                </p>
+                <p className="text-xs text-slate-400 dark:text-slate-500">
                   {urlVal
-                    ? <p className="text-xs text-emerald-600 dark:text-emerald-400 font-mono truncate">{urlVal}</p>
-                    : <p className="text-xs text-amber-600 dark:text-amber-400">לא זוהתה כתובת — פתח את האפליקציה דרך GitHub Pages</p>
-                  }
-                </div>
+                    ? 'מוגדר — ממלאים פעם אחת בלבד, נשמר אוטומטית.'
+                    : 'ממלאים פעם אחת כדי שאביה יוכל לפתוח את הדוח בלחיצה. נשמר אוטומטית.'}
+                </p>
               </div>
-              {/* allow override if needed */}
-              <details className="text-xs">
-                <summary className="cursor-pointer text-slate-400 dark:text-slate-500 hover:text-primary transition-colors">שנה כתובת ידנית</summary>
-                <div className="mt-2 flex gap-2">
-                  <div className="flex-1">
-                    <UInput placeholder="https://username.github.io/weekly-report.html"
-                      value={urlVal} onChange={v=>{setUrlVal(v); LS.setBaseUrl(v);}}
-                      onBlur={()=>saveUrl()} type="url"/>
-                  </div>
-                  {savedUrl && <span className="text-emerald-500 text-sm font-bold self-end pb-1.5">✓</span>}
+              <div className="flex gap-2 items-end">
+                <div className="flex-1">
+                  <UInput
+                    placeholder="https://avivhaziza.github.io/weekly-report/weekly-report.html"
+                    value={urlVal}
+                    onChange={v=>{setUrlVal(v); LS.setBaseUrl(v);}}
+                    onBlur={()=>saveUrl()}
+                    type="url"/>
                 </div>
-              </details>
+                {savedUrl && <span className="text-emerald-500 text-sm font-bold pb-1.5 shrink-0">✓ נשמר</span>}
+              </div>
+              {!urlVal && (
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  הכתובת היא: <span className="font-mono font-bold">https://avivhaziza.github.io/weekly-report/weekly-report.html</span>
+                </p>
+              )}
             </div>
           </div>
 
