@@ -548,55 +548,58 @@
           } catch { return null; }
         }));
 
-        // 3. build boardSnapshot: actual board/list structure with this week's activity
-        //    "moved this week" cards appear under a special synthetic "__moved__" list per destination.
-        //    All other active open cards appear under their real list name.
+        // 3. build boardSnapshot: actual board/list structure with this week's activity.
+        //    Cards are grouped by their real list name. A list is marked isDone if any card
+        //    was moved INTO it this week (Actions API). Cards from both sources are merged
+        //    per list so the same list never appears twice.
         const snapshot = [];
         for (const data of boardData) {
           if (!data) continue;
           const { boardName, lists, actions, cards } = data;
-          const listMap = Object.fromEntries(lists.map(l=>[l.id, { name:l.name, pos:lists.indexOf(l) }]));
+          const listMap = Object.fromEntries(lists.map(l=>[l.id, l.name]));
           const seen    = new Set();
 
-          // Accumulate cards per destination list name for moved-this-week cards
-          const movedByList = {};  // listName → [cardName, ...]
+          // byList: listName → { cards: [], isDone: bool }
+          const byList = {};
+          const ensure = (name, isDone) => {
+            if (!byList[name]) byList[name] = { cards: [], isDone: false };
+            if (isDone) byList[name].isDone = true; // once marked done, stays done
+          };
+
+          // A. Cards moved INTO any list this week (Actions API)
           for (const action of actions) {
             const { card, listAfter } = action.data || {};
             if (!card || !listAfter || seen.has(card.id)) continue;
             seen.add(card.id);
             const dest = listAfter.name || '?';
-            if (!movedByList[dest]) movedByList[dest] = [];
-            movedByList[dest].push(card.name);
+            ensure(dest, true);
+            byList[dest].cards.push(card.name);
           }
 
-          // Accumulate active open cards by their current list (not in backlog)
+          // B. Open cards with activity this week, not already counted
           const isBacklog = n => /backlog|רעיונות|ideas|queue|תור|to.?do/i.test(n);
-          const activeByList = {};  // listName → [cardName, ...]
           for (const card of cards) {
             if (seen.has(card.id)) continue;
             if (!thisWeek(card.dateLastActivity)) continue;
-            const linfo = listMap[card.idList];
-            if (!linfo) continue;
-            if (isBacklog(linfo.name)) continue;
+            const ln = listMap[card.idList];
+            if (!ln || isBacklog(ln)) continue;
             seen.add(card.id);
-            if (!activeByList[linfo.name]) activeByList[linfo.name] = [];
-            activeByList[linfo.name].push(card.name);
+            ensure(ln, false);
+            byList[ln].cards.push(card.name);
           }
 
-          // Build list entries, preserving board order for open lists first, then moved lists
+          // Build list entries in board order, then any moved-to lists not in open lists
           const boardLists = [];
-
-          // Open lists that had active cards this week (in board order)
+          const seen2 = new Set();
           for (const l of lists) {
-            if (activeByList[l.name]?.length) {
-              boardLists.push({ listName: l.name, cards: activeByList[l.name], isDone: false });
+            if (byList[l.name]?.cards.length) {
+              boardLists.push({ listName: l.name, ...byList[l.name] });
+              seen2.add(l.name);
             }
           }
-
-          // Moved-to lists (cards completed this week) — marked isDone
-          for (const [listName, cards] of Object.entries(movedByList)) {
-            if (cards.length) {
-              boardLists.push({ listName, cards, isDone: true });
+          for (const [listName, entry] of Object.entries(byList)) {
+            if (!seen2.has(listName) && entry.cards.length) {
+              boardLists.push({ listName, ...entry });
             }
           }
 
