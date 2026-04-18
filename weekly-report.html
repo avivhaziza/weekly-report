@@ -116,6 +116,16 @@
     const hm = window.location.hash.match(/[#&]r=([^&]+)/);
     return hm ? decodeReport(hm[1]) : null;
   }
+  // auto-detect the base URL for link generation — no config needed when hosted
+  function getEffectiveBaseUrl() {
+    const stored = LS.getBaseUrl().trim();
+    if (stored) return stored;
+    const loc = window.location;
+    if (loc.protocol === 'https:' || loc.protocol === 'http:') {
+      return loc.origin + loc.pathname; // e.g. https://avivhaziza.github.io/weekly-report/weekly-report.html
+    }
+    return '';
+  }
 
   /* ─── storage ─── */
   const LS = {
@@ -181,9 +191,9 @@
     );
   }
 
-  function UInput({ placeholder, value, onChange, maxLength, type='text' }) {
+  function UInput({ placeholder, value, onChange, onBlur, maxLength, type='text' }) {
     return (
-      <input type={type} value={value} onChange={e=>onChange(e.target.value)}
+      <input type={type} value={value} onChange={e=>onChange(e.target.value)} onBlur={onBlur}
         placeholder={placeholder} maxLength={maxLength}
         className="w-full bg-transparent border-0 border-b-2 border-slate-200 dark:border-slate-600 focus:border-primary dark:focus:border-blue-400 py-2 text-on-surface dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 text-sm transition-colors"/>
     );
@@ -406,15 +416,22 @@
           ) : <span className="text-slate-400 text-sm">—</span>}
         </Block>
 
-        {/* ── needs from partner (only if yes) ── */}
-        {report.needAviya === 'yes' && (
-          <div className="bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-800 rounded-xl p-4">
-            <p className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-              <span className="material-symbols-outlined text-base">priority_high</span>
-              דרוש מ{report.partnerName||'השותפ/ה'}
-            </p>
-            <p className="text-sm font-semibold text-on-surface dark:text-slate-200">{report.aviyaText || '?'}</p>
-          </div>
+        {/* ── needs from partner ── always shown when answered ── */}
+        {(report.needAviya === 'yes' || report.needAviya === 'no') && (
+          report.needAviya === 'yes' ? (
+            <div className="bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-800 rounded-xl p-4">
+              <p className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-base">priority_high</span>
+                דרוש מ{report.partnerName||'השותפ/ה'}
+              </p>
+              <p className="text-sm font-semibold text-on-surface dark:text-slate-200">{report.aviyaText || '?'}</p>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl px-4 py-3">
+              <span className="material-symbols-outlined text-emerald-600 dark:text-emerald-400 text-xl">check_circle</span>
+              <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">לא נדרש כלום מ{report.partnerName||'השותפ/ה'} השבוע</span>
+            </div>
+          )
         )}
 
         {/* ── copy link ── */}
@@ -534,7 +551,7 @@
     }
 
     function handleSend() {
-      const baseUrl = LS.getBaseUrl().trim();
+      const baseUrl = getEffectiveBaseUrl();
       const reportData = buildReportData();
       const encoded = encodeReport(reportData);
 
@@ -957,37 +974,36 @@
       setTrLoading(false);
     }
 
-    function saveName() { LS.setPartner(nameVal); setPartnerName(nameVal); setSavedName(true); setTimeout(()=>setSavedName(false),2000); }
-    function saveUrl()  { LS.setBaseUrl(urlVal); setSavedUrl(true); setTimeout(()=>setSavedUrl(false),2000); }
+    function saveName(v=nameVal) { LS.setPartner(v); setPartnerName(v); setSavedName(true); setTimeout(()=>setSavedName(false),2000); }
+    function saveUrl(v=urlVal)   { LS.setBaseUrl(v); setSavedUrl(true); setTimeout(()=>setSavedUrl(false),2000); }
     function clearAll() { LS.clearAll(); setCleared(true); setTimeout(()=>setCleared(false),2500); }
+    // auto-save Trello keys on blur (no verification, just persist)
+    function autoSaveTrello() { if(trKey||trToken) LS.setTrello({ ...LS.getTrello(), key:trKey, token:trToken }); }
 
     return (
       <div className="max-w-lg">
         <h1 className="text-4xl font-extrabold tracking-tight text-on-surface dark:text-slate-100 mb-8 font-headline">הגדרות</h1>
         <div className="space-y-6">
 
-          {/* hosted url — most important */}
+          {/* hosted url */}
           <div className="bg-surface-container-low dark:bg-slate-800 rounded-xl relative overflow-hidden">
             <div className="absolute top-0 right-0 w-full h-1 bg-surface-tint"/>
             <div className="p-6 space-y-4">
               <div>
-                <p className="font-bold text-on-surface dark:text-slate-100 text-sm mb-0.5">כתובת האתר המאוחסן</p>
-                <p className="text-xs text-slate-400 dark:text-slate-500">הכתובת שבה הקובץ weekly-report.html מאוחסן אונליין. השותפ/ה יקבלו לינק לכתובת הזו עם הדוח מקודד.</p>
+                <p className="font-bold text-on-surface dark:text-slate-100 text-sm mb-0.5">כתובת שיתוף <span className="font-normal text-slate-400">(אופציונלי)</span></p>
+                <p className="text-xs text-slate-400 dark:text-slate-500">
+                  {getEffectiveBaseUrl()
+                    ? <span>זוהתה אוטומטית: <span className="font-mono text-primary dark:text-blue-400">{getEffectiveBaseUrl()}</span></span>
+                    : 'אם האפליקציה מאוחסנת אונליין, הכתובת מזוהה אוטומטית. שנה רק אם יש כתובת אחרת.'}
+                </p>
               </div>
               <div className="flex gap-3">
                 <div className="flex-1">
-                  <UInput placeholder="https://yourname.github.io/weekly-report.html" value={urlVal} onChange={setUrlVal} type="url"/>
+                  <UInput placeholder={getEffectiveBaseUrl() || 'https://username.github.io/weekly-report.html'}
+                    value={urlVal} onChange={v=>{setUrlVal(v); LS.setBaseUrl(v);}}
+                    onBlur={()=>saveUrl()} type="url"/>
                 </div>
-                <button onClick={saveUrl}
-                  className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors shrink-0 ${savedUrl?'bg-emerald-500 text-white':'bg-primary text-white hover:bg-blue-800'}`}>
-                  {savedUrl?'✓':'שמור'}
-                </button>
-              </div>
-              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 text-xs text-slate-600 dark:text-slate-400 space-y-1.5">
-                <p className="font-bold text-primary dark:text-blue-400">איפה לאחסן בחינם?</p>
-                <p>1. פתח חשבון ב-<strong>GitHub</strong> ← צור repo ← העלה את הקובץ</p>
-                <p>2. Settings → Pages → Deploy from branch → main</p>
-                <p>3. הכתובת תהיה: <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">username.github.io/repo-name/weekly-report.html</code></p>
+                {savedUrl && <span className="text-emerald-500 text-sm font-bold self-end pb-1.5">✓</span>}
               </div>
             </div>
           </div>
@@ -1004,11 +1020,15 @@
               <div className="space-y-3">
                 <div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">API Key</p>
-                  <UInput placeholder="הדבק API Key מ-trello.com/app-key" value={trKey} onChange={setTrKey}/>
+                  <UInput placeholder="הדבק API Key מ-trello.com/app-key" value={trKey}
+                    onChange={v=>{setTrKey(v); LS.setTrello({...LS.getTrello(),key:v});}}
+                    onBlur={autoSaveTrello}/>
                 </div>
                 <div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Token</p>
-                  <UInput placeholder="הדבק Token" value={trToken} onChange={setTrToken}/>
+                  <UInput placeholder="הדבק Token" value={trToken}
+                    onChange={v=>{setTrToken(v); LS.setTrello({...LS.getTrello(),token:v});}}
+                    onBlur={autoSaveTrello}/>
                 </div>
               </div>
 
@@ -1038,12 +1058,13 @@
               <p className="font-bold text-on-surface dark:text-slate-100 text-sm mb-0.5">שם השותפ/ה</p>
               <p className="text-xs text-slate-400 dark:text-slate-500">משמש בכפתור השליחה ובשאלה "צריך משהו מ..."</p>
             </div>
-            <div className="flex gap-3">
-              <div className="flex-1"><UInput placeholder="שם השותפ/ה" value={nameVal} onChange={setNameVal} maxLength={30}/></div>
-              <button onClick={saveName}
-                className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors shrink-0 ${savedName?'bg-emerald-500 text-white':'bg-primary text-white hover:bg-blue-800'}`}>
-                {savedName?'✓':'שמור'}
-              </button>
+            <div className="flex items-end gap-3">
+              <div className="flex-1">
+                <UInput placeholder="שם השותפ/ה" value={nameVal}
+                  onChange={v=>{setNameVal(v); LS.setPartner(v); setPartnerName(v);}}
+                  onBlur={()=>saveName()} maxLength={30}/>
+              </div>
+              {savedName && <span className="text-emerald-500 text-sm font-bold pb-1.5">✓</span>}
             </div>
           </div>
 
