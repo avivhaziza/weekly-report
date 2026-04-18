@@ -554,20 +554,16 @@
       const baseUrl = getEffectiveBaseUrl();
       const reportData = buildReportData();
       const encoded = encodeReport(reportData);
-
-      if (!baseUrl) {
-        // שמור לפחות היסטורית, ושלח טקסט רגיל
-        LS.addReport({ id:Date.now(), ...reportData });
-        setNoUrl(true);
-        setTimeout(()=>setNoUrl(false), 4000);
-        return;
-      }
-
-      const link = `${baseUrl.replace(/\/$/, '')}?r=${encoded}`;
-      LS.addReport({ id:Date.now(), ...reportData, link });
+      const link = baseUrl ? `${baseUrl.replace(/\/$/, '')}?r=${encoded}` : null;
+      LS.addReport({ id:Date.now(), ...reportData, ...(link ? {link} : {}) });
       setSent(true);
       setTimeout(()=>setSent(false), 3000);
-      window.open(`https://wa.me/?text=${encodeURIComponent(link)}`, '_blank');
+      if (link) {
+        window.open(`https://wa.me/?text=${encodeURIComponent(link)}`, '_blank');
+      } else {
+        setNoUrl(true);
+        setTimeout(()=>setNoUrl(false), 4000);
+      }
     }
 
     const canSend = f.status && f.areas.length > 0;
@@ -946,7 +942,7 @@
   /* ─── Settings Page ─── */
   function SettingsPage({ dark, toggleDark, partnerName, setPartnerName }) {
     const [nameVal, setNameVal]   = useState(partnerName);
-    const [urlVal, setUrlVal]     = useState(LS.getBaseUrl());
+    const [urlVal, setUrlVal]     = useState(() => { const v=LS.getBaseUrl()||getEffectiveBaseUrl(); if(v&&!LS.getBaseUrl())LS.setBaseUrl(v); return v; });
     const [savedName, setSavedName] = useState(false);
     const [savedUrl, setSavedUrl]   = useState(false);
     const [cleared, setCleared]     = useState(false);
@@ -985,26 +981,32 @@
         <h1 className="text-4xl font-extrabold tracking-tight text-on-surface dark:text-slate-100 mb-8 font-headline">הגדרות</h1>
         <div className="space-y-6">
 
-          {/* hosted url */}
+          {/* hosted url — shown only as info, not editable unless needed */}
           <div className="bg-surface-container-low dark:bg-slate-800 rounded-xl relative overflow-hidden">
             <div className="absolute top-0 right-0 w-full h-1 bg-surface-tint"/>
-            <div className="p-6 space-y-4">
-              <div>
-                <p className="font-bold text-on-surface dark:text-slate-100 text-sm mb-0.5">כתובת שיתוף <span className="font-normal text-slate-400">(אופציונלי)</span></p>
-                <p className="text-xs text-slate-400 dark:text-slate-500">
-                  {getEffectiveBaseUrl()
-                    ? <span>זוהתה אוטומטית: <span className="font-mono text-primary dark:text-blue-400">{getEffectiveBaseUrl()}</span></span>
-                    : 'אם האפליקציה מאוחסנת אונליין, הכתובת מזוהה אוטומטית. שנה רק אם יש כתובת אחרת.'}
-                </p>
-              </div>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <UInput placeholder={getEffectiveBaseUrl() || 'https://username.github.io/weekly-report.html'}
-                    value={urlVal} onChange={v=>{setUrlVal(v); LS.setBaseUrl(v);}}
-                    onBlur={()=>saveUrl()} type="url"/>
+            <div className="p-6 space-y-3">
+              <div className="flex items-start gap-3">
+                <span className="material-symbols-outlined text-emerald-500 shrink-0 mt-0.5">link</span>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-on-surface dark:text-slate-100 text-sm mb-0.5">כתובת שיתוף</p>
+                  {urlVal
+                    ? <p className="text-xs text-emerald-600 dark:text-emerald-400 font-mono truncate">{urlVal}</p>
+                    : <p className="text-xs text-amber-600 dark:text-amber-400">לא זוהתה כתובת — פתח את האפליקציה דרך GitHub Pages</p>
+                  }
                 </div>
-                {savedUrl && <span className="text-emerald-500 text-sm font-bold self-end pb-1.5">✓</span>}
               </div>
+              {/* allow override if needed */}
+              <details className="text-xs">
+                <summary className="cursor-pointer text-slate-400 dark:text-slate-500 hover:text-primary transition-colors">שנה כתובת ידנית</summary>
+                <div className="mt-2 flex gap-2">
+                  <div className="flex-1">
+                    <UInput placeholder="https://username.github.io/weekly-report.html"
+                      value={urlVal} onChange={v=>{setUrlVal(v); LS.setBaseUrl(v);}}
+                      onBlur={()=>saveUrl()} type="url"/>
+                  </div>
+                  {savedUrl && <span className="text-emerald-500 text-sm font-bold self-end pb-1.5">✓</span>}
+                </div>
+              </details>
             </div>
           </div>
 
