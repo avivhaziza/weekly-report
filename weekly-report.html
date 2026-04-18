@@ -482,53 +482,53 @@
       try {
         const q = `key=${cfg.key}&token=${cfg.token}`;
 
-        // helpers
-        const isDone    = n => /done|הושלם|finished|complet|ארכיון|archive|closed|סגור/i.test(n);
-        const isBlocked = n => /block|תקוע|עצור|stuck|hold/i.test(n);
-        const cardAge   = id => new Date(parseInt(id.substring(0,8),16)*1000); // creation date from Trello card ID
-
-        // week boundaries
-        const ws = new Date(f.weekStart);
-        const we = new Date(f.weekEnd); we.setHours(23,59,59);
-        const activeThisWeek = d => { const t=new Date(d); return t>=ws && t<=we; };
-        const newThisWeek    = id => { const t=cardAge(id); return t>=ws && t<=we; };
+        // detect list type by name — expanded to cover common Hebrew/English names
+        const isDone    = n => /done|הושלם|finished|complet|ארכיון|archive|closed|סגור|בוצע|נגמר|הסתיים|טופל|סיום/i.test(n);
+        const isBlocked = n => /block|תקוע|עצור|stuck|hold|עצור/i.test(n);
+        const isBacklog = n => /backlog|רעיונות|ideas|queue|תור|לביצוע|to.?do/i.test(n);
+        // card creation date from Trello card ID (first 8 hex chars = unix seconds)
+        const cardAge   = id => new Date(parseInt(id.substring(0,8),16)*1000);
+        const ws = new Date(f.weekStart), we = new Date(f.weekEnd); we.setHours(23,59,59);
+        const newThisWeek = id => { const t=cardAge(id); return t>=ws && t<=we; };
 
         // 1. all open boards
         const boardsRes = await fetch(`https://api.trello.com/1/members/me/boards?filter=open&fields=name,id&${q}`);
         if (!boardsRes.ok) throw new Error('פרטים שגויים — בדוק Key ו-Token בהגדרות');
         const boards = await boardsRes.json();
 
-        // 2. for each board, fetch lists + cards in parallel
+        // 2. each board independently — failure of one won't kill others
         const boardData = await Promise.all(boards.map(async board => {
-          const [lr, cr] = await Promise.all([
-            fetch(`https://api.trello.com/1/boards/${board.id}/lists?filter=open&fields=name,id&${q}`),
-            fetch(`https://api.trello.com/1/boards/${board.id}/cards?filter=open&fields=name,dateLastActivity,idList,id&${q}`),
-          ]);
-          return { boardName: board.name, lists: await lr.json(), cards: await cr.json() };
+          try {
+            const [lr, cr] = await Promise.all([
+              fetch(`https://api.trello.com/1/boards/${board.id}/lists?filter=open&fields=name,id&${q}`),
+              fetch(`https://api.trello.com/1/boards/${board.id}/cards?filter=open&fields=name,idList,id&${q}`),
+            ]);
+            if (!lr.ok || !cr.ok) return null;
+            return { boardName: board.name, lists: await lr.json(), cards: await cr.json() };
+          } catch { return null; }
         }));
 
-        // 3. categorize
+        // 3. categorize — snapshot of current board state, no date filter
+        //    backlog lists are skipped (not relevant for weekly report)
         const done = [], active = [], blocked = [];
-        for (const { boardName, lists, cards } of boardData) {
-          const listName = Object.fromEntries(lists.map(l=>[l.id, l.name]));
-          const prefix   = boards.length > 1 ? `[${boardName}] ` : '';
+        for (const data of boardData) {
+          if (!data) continue;
+          const { boardName, lists, cards } = data;
+          const listMap = Object.fromEntries(lists.map(l=>[l.id, l.name]));
+          const prefix  = boards.length > 1 ? `[${boardName}] ` : '';
           for (const card of cards) {
-            const ln  = listName[card.idList] || '';
+            const ln    = listMap[card.idList] || '';
             const label = (newThisWeek(card.id) ? '🆕 ' : '') + prefix + card.name;
-            if (isDone(ln)) {
-              if (activeThisWeek(card.dateLastActivity)) done.push(label);
-            } else if (isBlocked(ln)) {
-              blocked.push(label);
-            } else {
-              if (activeThisWeek(card.dateLastActivity)) active.push(label);
-            }
+            if      (isDone(ln))    done.push(label);
+            else if (isBlocked(ln)) blocked.push(label);
+            else if (isBacklog(ln)) continue; // skip backlog/ideas
+            else                    active.push(label);
           }
         }
 
         setF(p => ({ ...p, doneTasks: done, inProgressTasks: active, blockedTasks: blocked }));
-        if (!done.length && !active.length && !blocked.length) {
-          setImportErr('אין פעילות השבוע בטרלו'); setTimeout(()=>setImportErr(''),4000);
-        }
+        const total = done.length + active.length + blocked.length;
+        if (!total) { setImportErr('לא נמצאו כרטיסים בלוחות'); setTimeout(()=>setImportErr(''),4000); }
       } catch(e) { setImportErr(e.message||'שגיאה לא ידועה'); setTimeout(()=>setImportErr(''),4000); }
       setImporting(false);
     }
