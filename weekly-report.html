@@ -640,21 +640,59 @@
       setTimeout(()=>setSaved(false), 2000);
     }
 
+    function buildWhatsAppText(data) {
+      const statusObj = STATUS_OPTS.find(o=>o.v===data.status);
+      const areas     = AREA_OPTS.filter(o=>data.areas?.includes(o.v)).map(o=>o.label);
+      const focusList = FOCUS_OPTS.filter(o=>data.focus?.includes(o.v)).map(o=>o.label);
+      const done      = data.doneTasks||[];
+      const ip        = data.inProgressTasks||[];
+      const lines = [];
+      lines.push(`📊 *דיווח שבועי | ${data.weekStart} – ${data.weekEnd}*`);
+      lines.push('');
+      lines.push(`${statusObj?.emoji||''} *${statusObj?.label||data.status}*`);
+      if (data.statusWhy) lines.push(data.statusWhy);
+      lines.push('');
+      if (areas.length) lines.push(`*תחומי התקדמות:* ${areas.join(' · ')}`);
+      if (done.length) {
+        lines.push('');
+        lines.push(`✅ *בוצע (${done.length}):*`);
+        done.forEach(t => lines.push(`• ${t}`));
+      }
+      if (ip.length) {
+        lines.push('');
+        lines.push(`🔄 *בתהליך (${ip.length}):*`);
+        ip.forEach(t => lines.push(`• ${t}`));
+      }
+      if (data.blocked === 'yes') {
+        lines.push('');
+        lines.push(`⚠️ *תקוע:* כן`);
+        if (data.blockedWhy) lines.push(data.blockedWhy);
+      }
+      if (focusList.length || data.focusMain) {
+        lines.push('');
+        lines.push(`🎯 *פוקוס לשבוע הבא:*`);
+        if (focusList.length) lines.push(focusList.join(' · '));
+        if (data.focusMain) lines.push(data.focusMain);
+      }
+      if (data.needAviya === 'yes' && data.aviyaText) {
+        lines.push('');
+        lines.push(`🤝 *צריך מ${data.partnerName||'השותפ/ה'}:*`);
+        lines.push(data.aviyaText);
+      }
+      return lines.join('\n');
+    }
+
     function handleSend() {
-      const baseUrl = getEffectiveBaseUrl();
       const reportData = buildReportData();
+      const text = buildWhatsAppText(reportData);
+      const baseUrl = getEffectiveBaseUrl();
       const encoded = encodeReport(reportData);
-      if (!encoded) { setNoUrl(true); setTimeout(()=>setNoUrl(false),4000); return; }
-      const link = baseUrl ? `${baseUrl.replace(/\/$/, '')}#r=${encoded}` : null;
+      const link = (baseUrl && encoded) ? `${baseUrl.replace(/\/$/, '')}#r=${encoded}` : null;
       LS.addReport({ id:Date.now(), ...reportData, ...(link ? {link} : {}) });
       setSent(true);
       setTimeout(()=>setSent(false), 3000);
-      if (link) {
-        window.open(`https://wa.me/?text=${encodeURIComponent(link)}`, '_blank');
-      } else {
-        setNoUrl(true);
-        setTimeout(()=>setNoUrl(false), 4000);
-      }
+      const fullMsg = link ? `${text}\n\n🔗 ${link}` : text;
+      window.open(`https://wa.me/?text=${encodeURIComponent(fullMsg)}`, '_blank');
     }
 
     const canSend = f.status && f.areas.length > 0;
