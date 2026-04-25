@@ -60,45 +60,26 @@
         const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
         return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
       };
-      const clean = s => s.replace(/^🆕\s*/,'').slice(0,30).trim();
-      const base = {
+      // Limit text fields so the hash stays short and WhatsApp linkifies the full URL
+      const trim = (s, n) => (s||'').slice(0,n).trim() || undefined;
+      const c = {
         ws: data.weekStart,
         we: data.weekEnd,
         s:  data.status,
-        sw: data.statusWhy  || undefined,
+        sw: trim(data.statusWhy, 40),
         a:  data.areas,
-        tr: data.trello     || undefined,
         b:  data.blocked === 'yes' ? 1 : 0,
-        bw: data.blockedWhy || undefined,
+        bw: trim(data.blockedWhy, 40),
         f:  data.focus,
-        fm: data.focusMain  || undefined,
+        fm: trim(data.focusMain, 35),
         n:  data.needAviya === 'yes' ? 1 : 0,
-        av: data.aviyaText  || undefined,
+        av: trim(data.aviyaText, 40),
         pn: data.partnerName,
+        d:  (data.doneTasks||[]).slice(0,6).map(s=>s.slice(0,30).trim()).filter(Boolean),
+        ip: (data.inProgressTasks||[]).slice(0,4).map(s=>s.slice(0,30).trim()).filter(Boolean),
       };
-      Object.keys(base).forEach(k => base[k] === undefined && delete base[k]);
-
-      // Try with limited board snapshot; if URL would exceed 1600 chars, fall back to flat lists
-      if (data.boardSnapshot?.length) {
-        const bs = data.boardSnapshot.slice(0,2).map(board=>({
-          b: board.boardName.slice(0,18),
-          l: board.lists.filter(l=>l.cards.length).slice(0,3).map(l=>({
-            n: l.listName.slice(0,18),
-            c: l.cards.slice(0,3).map(clean),
-            ...(l.isDone ? {d:1} : {}),
-          }))
-        })).filter(b=>b.l.length);
-        const encoded = toB64({ ...base, bs });
-        if (encoded.length <= 1600) return encoded;
-      }
-
-      // Fallback: flat task arrays (no board structure)
-      const d  = (data.doneTasks||[]).slice(0,8).map(s=>s.slice(0,35).trim()).filter(Boolean);
-      const ip = (data.inProgressTasks||[]).slice(0,5).map(s=>s.slice(0,35).trim()).filter(Boolean);
-      const flat = { ...base };
-      if (d.length)  flat.d  = d;
-      if (ip.length) flat.ip = ip;
-      return toB64(flat);
+      Object.keys(c).forEach(k => (c[k] === undefined || (Array.isArray(c[k]) && !c[k].length)) && delete c[k]);
+      return toB64(c);
     } catch { return null; }
   }
   function decodeReport(str) {
@@ -664,7 +645,7 @@
       const reportData = buildReportData();
       const encoded = encodeReport(reportData);
       if (!encoded) { setNoUrl(true); setTimeout(()=>setNoUrl(false),4000); return; }
-      const link = baseUrl ? `${baseUrl.replace(/\/$/, '')}?r=${encoded}` : null;
+      const link = baseUrl ? `${baseUrl.replace(/\/$/, '')}#r=${encoded}` : null;
       LS.addReport({ id:Date.now(), ...reportData, ...(link ? {link} : {}) });
       setSent(true);
       setTimeout(()=>setSent(false), 3000);
