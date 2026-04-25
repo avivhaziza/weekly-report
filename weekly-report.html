@@ -56,22 +56,17 @@
   /* ─── encode / decode report in URL ─── */
   function encodeReport(data) {
     try {
-      const clean = s => s.replace(/^🆕\s*/,'').slice(0,55).trim();
-      const c = {
+      const toB64 = obj => {
+        const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+        return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+      };
+      const clean = s => s.replace(/^🆕\s*/,'').slice(0,30).trim();
+      const base = {
         ws: data.weekStart,
         we: data.weekEnd,
         s:  data.status,
         sw: data.statusWhy  || undefined,
         a:  data.areas,
-        // board snapshot: [{ b: boardName, l: [{ n: listName, c: [cards], d: 1ifDone }] }]
-        bs: data.boardSnapshot?.length ? data.boardSnapshot.map(board=>({
-              b: board.boardName,
-              l: board.lists.filter(l=>l.cards.length).map(l=>({
-                n: l.listName,
-                c: l.cards.slice(0,6).map(clean),
-                ...(l.isDone ? {d:1} : {}),
-              }))
-            })).filter(b=>b.l.length) : undefined,
         tr: data.trello     || undefined,
         b:  data.blocked === 'yes' ? 1 : 0,
         bw: data.blockedWhy || undefined,
@@ -81,10 +76,29 @@
         av: data.aviyaText  || undefined,
         pn: data.partnerName,
       };
-      Object.keys(c).forEach(k => c[k] === undefined && delete c[k]);
-      // URL-safe base64: replace + → - , / → _ , strip = padding
-      const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(c))));
-      return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+      Object.keys(base).forEach(k => base[k] === undefined && delete base[k]);
+
+      // Try with limited board snapshot; if URL would exceed 1600 chars, fall back to flat lists
+      if (data.boardSnapshot?.length) {
+        const bs = data.boardSnapshot.slice(0,2).map(board=>({
+          b: board.boardName.slice(0,18),
+          l: board.lists.filter(l=>l.cards.length).slice(0,3).map(l=>({
+            n: l.listName.slice(0,18),
+            c: l.cards.slice(0,3).map(clean),
+            ...(l.isDone ? {d:1} : {}),
+          }))
+        })).filter(b=>b.l.length);
+        const encoded = toB64({ ...base, bs });
+        if (encoded.length <= 1600) return encoded;
+      }
+
+      // Fallback: flat task arrays (no board structure)
+      const d  = (data.doneTasks||[]).slice(0,8).map(s=>s.slice(0,35).trim()).filter(Boolean);
+      const ip = (data.inProgressTasks||[]).slice(0,5).map(s=>s.slice(0,35).trim()).filter(Boolean);
+      const flat = { ...base };
+      if (d.length)  flat.d  = d;
+      if (ip.length) flat.ip = ip;
+      return toB64(flat);
     } catch { return null; }
   }
   function decodeReport(str) {
@@ -649,6 +663,7 @@
       const baseUrl = getEffectiveBaseUrl();
       const reportData = buildReportData();
       const encoded = encodeReport(reportData);
+      if (!encoded) { setNoUrl(true); setTimeout(()=>setNoUrl(false),4000); return; }
       const link = baseUrl ? `${baseUrl.replace(/\/$/, '')}?r=${encoded}` : null;
       LS.addReport({ id:Date.now(), ...reportData, ...(link ? {link} : {}) });
       setSent(true);
